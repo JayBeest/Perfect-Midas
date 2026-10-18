@@ -4758,6 +4758,8 @@ s32 videoInit(void)
         portInputInit(); /* SDL controllers + mouse (input_pc.c) */
     }
 
+    SDL_StopTextInput();
+
     portRenderThreadStart(); /* item 15: must be the LAST init step - it moves GL off this thread */
 
     s_VideoInitDone = true;
