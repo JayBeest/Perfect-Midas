@@ -7626,6 +7626,50 @@ void bondviewProcessInput(s8 stick_x, s8 stick_y, u16 buttons, u16 oldbuttons)
                 moveData.digitalStepLeft = (kx < 0);
             }
         }
+        else if (!portInputPadIsN64(pl) && g_portBondFrozenTick != 0 && g_PlayerIsInTank != 1
+            && g_CurrentPlayer->watch_animation_state == WATCH_ANIMATION_0x0
+            && g_CurrentPlayer->bonddead == FALSE
+            && (getPlayerCount() == 1 || (g_stopPlayFlag == 0 && g_gameOverFlag == 0))
+            && lvlGetControlsLockedFlag() == 0 && disablePlayerActionsWhenPausedOrInMpMenu())
+        {   /* CUTSCENE RUN-UP: on 2.x Rare reads the second pad even while the camera is
+             * frozen, so holding it through an intro builds speed and the run boost.
+             * A port-driven player gets the same from the Move stick or keys. */
+            extern s32 get_is_ramrom_flag(void);
+
+            if (get_is_ramrom_flag() == 0)
+            {
+                const s32 mx = joyGetStickX(pl);
+                const s32 my = joyGetStickY(pl);
+
+                /* the same 5-unit dead zone as the 2.x second-pad read */
+                moveData.analogStrafe = (mx < -5) ? mx + 5 : ((mx > 5) ? mx - 5 : 0);
+                moveData.analogWalk = (my < -5) ? my + 5 : ((my > 5) ? my - 5 : 0);
+                moveData.canTurnTank = 1;
+                moveData.canLookAhead = !g_CurrentPlayer->insightaimmode;
+                {   /* keys and D-pad as Rare's steps, as in live play: a diagonal is full
+                     * forward plus full sideways and builds the run boost */
+                    extern s32 portInputDigitalMove(s32 slot, s32 *dx, s32 *dy);
+                    s32 ddx = 0;
+                    s32 ddy = 0;
+
+                    if (portInputDigitalMove(pl, &ddx, &ddy))
+                    {
+                        if (ddy != 0)
+                        {
+                            moveData.digitalStepForward = (ddy > 0);
+                            moveData.digitalStepBack = (ddy < 0);
+                            moveData.canLookAhead = 0;
+                        }
+                        if (ddx != 0)
+                        {
+                            moveData.digitalStepRight = (ddx > 0);
+                            moveData.digitalStepLeft = (ddx < 0);
+                            moveData.canTurnTank = 0;
+                        }
+                    }
+                }
+            }
+        }
     }
 #endif
 

@@ -206,6 +206,8 @@ static const struct PortOpt sOpts[] = {
     TOGGLE("classic_filter2d", "[display]", "2D Filtering\n",   PORTOPT_CAT_DISPLAY),
     TOGGLE("classic_pillars",  "[display]", "4:3 Pillars\n",    PORTOPT_CAT_DISPLAY),
     TOGGLE("classic_hitches",  "[display]", "Load Hitches\n",   PORTOPT_CAT_DISPLAY),
+    TOGGLE("classic_n64aa",    "[display]", "N64 AA\n",         PORTOPT_CAT_DISPLAY),
+    TOGGLE("classic_composite", "[display]", "Composite Video\n", PORTOPT_CAT_DISPLAY),
     /* Horizontal FOV on a 16:9 picture; 90 is vanilla's 60 vertical (really
      * 91.5, rounded to sit on the grid). The older ini keys hfov= (4:3) and
      * fov= (vertical) are still read (video.c "hfov_wide"). */

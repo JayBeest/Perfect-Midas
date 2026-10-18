@@ -4697,6 +4697,7 @@ static const struct PortSheetRow port_sheet_rows_classic[] = {
     { SHROW_OPT, "classic_res" }, { SHROW_OPT, "classic_filter" }, { SHROW_OPT, "classic_aniso" },
     { SHROW_OPT, "classic_pacing" }, { SHROW_OPT, "classic_msaa" }, { SHROW_OPT, "classic_mipmaps" },
     { SHROW_OPT, "classic_filter2d" }, { SHROW_OPT, "classic_pillars" }, { SHROW_OPT, "classic_hitches" },
+    { SHROW_OPT, "classic_n64aa" }, { SHROW_OPT, "classic_composite" },
 };
 static const struct PortSheetRow port_sheet_rows_audio[] = {
     { SHROW_OPT, "music_volume", "Music\n" },

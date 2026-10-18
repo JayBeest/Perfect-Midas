@@ -6,6 +6,10 @@ This is a video game about Jimothy's presumed-dead best friend Jarvis turns out 
 
 Project Midas is a work-in-progress PC port of GE, built from the N64 decompilation. It runs on Windows and Linux and reads its game data from your own copy of the US cart.
 
+## AI Disclaimer
+
+Claude was used in the making of this project. If you don't agree with this, please do not download either the executables or the source.
+
 ## Playing
 
 1. Put your GE (USA) cart image in the `Data` folder next to the executable. See `Data/README.txt` for the accepted formats and other ways to point the game at it.

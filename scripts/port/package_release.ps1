@@ -4,7 +4,7 @@
 #
 # Layout, the same one the earlier GE-menu-overhaul-*.7z drops used:
 #   releases\<name>\windows\    ProjectMidas.exe SDL2.dll gamecontrollerdb.txt gamecontrollerdefault.txt midas_ini_help.txt Data\ Mods\
-#   releases\<name>\linux\      ProjectMidas gamecontrollerdb.txt gamecontrollerdefault.txt midas_ini_help.txt Data\ Mods\
+#   releases\<name>\linux\      ProjectMidas (build_deck) libSDL2-2.0.so.0 (i386) gamecontrollerdb.txt gamecontrollerdefault.txt midas_ini_help.txt Data\ Mods\
 #   releases\<name>\steamdeck\  the linux set + libSDL2-2.0.so.0 (i386) + run.sh
 #   releases\<name>\GE-<name>-{windows,linux,steamdeck}.7z   when 7z is on the PATH
 #
@@ -88,8 +88,11 @@ Copy-Item (Join-Path $root "build_win\ProjectMidas.exe") $win
 Copy-Item (Join-Path $root "build_win\SDL2.dll") $win
 
 $lin = Join-Path $out "linux"; Common $lin
-Copy-Item (Join-Path $root "build_linux\ProjectMidas") $lin
-"Needs a 32-bit-capable Linux with $glibcNote (and i386 SDL2).`r`nIf ./ProjectMidas says 'Permission denied': chmod +x ProjectMidas (the archive does not keep the exec bit).`r`n" | Add-Content -Encoding ASCII (Join-Path $lin "README.txt")
+# 2026-10-18: a Linux user got 'libSDL2-2.0.so.0 missing' (a 64-bit distro has no
+# i386 SDL2). Ship the deck's RUNPATH $ORIGIN exe and the portable SDL2 here too.
+Copy-Item (Join-Path $root "build_deck\ProjectMidas") $lin
+Copy-Item $sdlso (Join-Path $lin "libSDL2-2.0.so.0")
+"Needs a 32-bit-capable Linux with $glibcNote. SDL2 is bundled.`r`nIf ./ProjectMidas says 'Permission denied': chmod +x ProjectMidas (the archive does not keep the exec bit).`r`n" | Add-Content -Encoding ASCII (Join-Path $lin "README.txt")
 
 $deck = Join-Path $out "steamdeck"; Common $deck
 Copy-Item (Join-Path $root "build_deck\ProjectMidas") $deck

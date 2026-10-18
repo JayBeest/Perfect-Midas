@@ -140,9 +140,11 @@ padN_stickmode.
   classic_pacing      | 1          | setting. In order: 3D resolution,
   classic_msaa        | 1          | texture filter, anisotropy, max fps,
   classic_mipmaps     | 1          | MSAA, mipmaps, 2D filtering, the 4:3
-  classic_filter2d    | 1          | pillars and the load hitches (which
-  classic_pillars     | 1          | also need hardware pacing)
-  classic_hitches     | 1          |
+  classic_filter2d    | 1          | pillars, the load hitches (which also
+  classic_pillars     | 1          | need hardware pacing), the composite
+  classic_hitches     | 1          | video filter and N64 AA (the VI filter;
+  classic_composite   | 1          | off = plain MSAA, and no composite
+  classic_n64aa       | 1          | filter, which needs it)
   room_cache          | 2          | 2 = keep room geometry on the GPU
                       |            | (faster), 0 = classic path. Forced off
                       |            | with maxfps=-1

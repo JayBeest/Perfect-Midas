@@ -130,10 +130,10 @@ static int s_CfgMpUnlimitedExplosions = 1; /* [display] mp_unlimited_explosions:
 static int s_CfgUnlimitedExplosions = 1;   /* [display] unlimited_explosions: the same, solo (Port Options, default ON) */
 static int s_CfgWatchStatic = 1;
 static int s_CfgMouseAutoAim = 0;   /* [display] mouse_auto_aim: 1 lets a mouse player use Auto-Aim (default: never) */
-/* Classic Mode's NTSC composite filter (gfx_opengl.cpp vi_prog[3]) is part of
- * Classic Mode, not a setting of its own: it runs wherever Classic Mode's VI
- * resolve does. GE_NOCOMPOSITE=1 turns it off. */
-uint32_t gfx_composite = 1;           /* [display] watch_static: the watch's fuzz bursts (options.c; Port Options, default ON = vanilla) */
+/* Classic Mode's NTSC composite filter (gfx_opengl.cpp vi_prog[3]) is a Classic
+ * Mode part ([display] classic_composite): it runs wherever Classic Mode's VI
+ * resolve does while the part is on. GE_NOCOMPOSITE=1 turns it off. */
+uint32_t gfx_composite = 1;
 static int s_CfgMpLtkHealth = 0;           /* [display] mp_ltk_health: Licence to Kill's one-hit kills in any scenario (lv.c, bondview2.c) */
 static int s_CfgMpFriendlyFire = 1;       /* [display] mp_friendly_fire: team-mates can hurt each other in team scenarios (bondview2.c) */
 static int s_CfgMpNoArmor = 0;             /* [display] mp_no_armor: no body armour pickups on MP maps (prop.c) */
@@ -213,15 +213,18 @@ static int s_CfgN64Aa = 0;            /* [display] n64_aa: the level frame resol
                                        * filtered it (needs MSAA: forces at least 4x while on) - gfx_n64_aa */
 extern uint32_t gfx_n64_aa;           /* gfx_pc.cpp */
 extern void gfx_set_aa(uint32_t msaa_level, uint32_t n64_aa); /* gfx_pc.cpp: latched for the render thread's next frame when it runs */
+static int videoClassicViOn(void); /* with the Classic parts table below */
 static void videoApplyAa(void)
 {
+    /* Classic Mode's N64 AA part: off keeps Classic Mode but uses plain MSAA */
+    const int vi = videoClassicViOn();
     uint32_t level = (s_CfgMsaa == 2 || s_CfgMsaa == 4 || s_CfgMsaa == 8) ? (uint32_t) s_CfgMsaa : 1u;
-    if (s_CfgN64Aa && level < 4u)
+    if (vi && level < 4u)
     {
         level = 4u;
     }
-    gfx_set_aa(level, s_CfgN64Aa ? 1u : 0u); /* never a direct store: with the render
-                                              * thread on it lands mid-frame */
+    gfx_set_aa(level, vi ? 1u : 0u); /* never a direct store: with the render
+                                      * thread on it lands mid-frame */
 }
 static int s_CfgMipmaps = 0;          /* [display] hw_mipmaps: legacy key
                                        * (nonzero = on; default off, Murk
@@ -899,15 +902,20 @@ static void videoPersistDerivedTick(void)
 /* [display] classic_res .. classic_hitches: which parts Classic Mode applies
  * (the CLASSIC sheet, opened from VIDEO's middle tab). Bits 0..6 follow
  * port_options.c sClassicKeys (the settings it forces), 7 is the 4:3 pillars,
- * 8 the load hitches. All on by default = Classic Mode as it always was. */
+ * 8 the load hitches, 9 the composite filter, 10 the N64 AA (VI) filter,
+ * which the composite filter needs. All on by default = Classic
+ * Mode as it always was. */
 static const char *const s_ClassicPartKeys[] = {
     "classic_res", "classic_filter", "classic_aniso", "classic_pacing", "classic_msaa",
     "classic_mipmaps", "classic_filter2d", "classic_pillars", "classic_hitches",
+    "classic_composite", "classic_n64aa",
 };
 #define CLASSIC_PART_COUNT ((int) (sizeof(s_ClassicPartKeys) / sizeof(s_ClassicPartKeys[0])))
 #define CLASSIC_PART_MIPMAPS 5
 #define CLASSIC_PART_PILLARS 7
 #define CLASSIC_PART_HITCHES 8
+#define CLASSIC_PART_COMPOSITE 9
+#define CLASSIC_PART_N64AA 10
 static int s_CfgClassicParts = (1 << CLASSIC_PART_COUNT) - 1;
 
 static int videoClassicPartIndex(const char *key)
@@ -928,6 +936,12 @@ static int videoClassicPartIndex(const char *key)
 s32 portClassicPart(s32 i)
 {
     return (i >= 0 && i < CLASSIC_PART_COUNT) ? ((s_CfgClassicParts >> i) & 1) : 0;
+}
+
+/* Classic Mode is on and its N64 AA part too: the VI resolve runs (videoApplyAa) */
+static int videoClassicViOn(void)
+{
+    return s_CfgN64Aa && portClassicPart(CLASSIC_PART_N64AA);
 }
 
 /** Load hitches are a Classic part; they still only happen under hardware pacing. */
@@ -1142,6 +1156,7 @@ static int videoSetDisplayOption(const char *key, const char *value)
         const int bit = 1 << videoClassicPartIndex(key);
 
         s_CfgClassicParts = (SDL_atoi(value) != 0) ? (s_CfgClassicParts | bit) : (s_CfgClassicParts & ~bit);
+        gfx_composite = (uint32_t) portClassicPart(CLASSIC_PART_COMPOSITE);
         return 1;
     }
     if (SDL_strcasecmp(key, "health_wide") == 0)   { s_CfgHealthWide = SDL_atoi(value) != 0; return 1; }
@@ -1569,6 +1584,10 @@ s32 portVideoOptionSet(const char *key, s32 value)
     {
         videoApplyAa(); /* live: gfx_start_frame re-allocates the level framebuffer on the change (render thread: at its next frame start) */
         videoApplyMipmaps(); /* Classic Mode carries the mipmaps */
+    }
+    else if (videoClassicPartIndex(key) == CLASSIC_PART_N64AA)
+    {
+        videoApplyAa();
     }
     else if (videoClassicPartIndex(key) == CLASSIC_PART_MIPMAPS)
     {
@@ -2496,7 +2515,9 @@ void portRequestQuit(void)
  * in-game Port Options page (portIniWriteInts, port_options.c).
  */
 #define VIDEO_INI_MAX_LINES 2000
-#define VIDEO_INI_MAX_KEYS  64
+/* Per-section write cap. Port Options' [display] table passed the old 64 and
+ * every [display] save was refused, so keep this well above the table. */
+#define VIDEO_INI_MAX_KEYS  256
 static int s_IniSeen; /* midas.ini existed (read or written) this session */
 static int s_IniFresh; /* there was no midas.ini at boot */
 
@@ -2521,8 +2542,14 @@ static int videoIniWriteKeys(const char *section, const char *const *keys, const
     char line[256];
     FILE *f;
 
-    if (n <= 0 || n > VIDEO_INI_MAX_KEYS)
+    if (n <= 0)
     {
+        return 0;
+    }
+    if (n > VIDEO_INI_MAX_KEYS)
+    {
+        portConLogf("ge: midas.ini: %d %s keys is over the %d-key cap, not saving them\n", n, section,
+                    VIDEO_INI_MAX_KEYS);
         return 0;
     }
     for (i = 0; i < n; i++)
@@ -4381,7 +4408,9 @@ void videoGetPad(OSContPad *pad)
                 case BIND_ANALOG_UP:    sticky += 85; break;
                 case BIND_ANALOG_DOWN:  sticky -= 85; break;
                 case BIND_ANALOG_LEFT:  stickx -= 85; break;
-                case BIND_ANALOG_RIGHT: stickx += 85; break;
+                /* Left and right held together: left wins, as Rare's C-left /
+                 * C-right steps do on 1.2. LEFT is read first (bind order). */
+                case BIND_ANALOG_RIGHT: if (stickx >= 0) { stickx += 85; } break;
                 }
             }
         }
@@ -4587,6 +4616,32 @@ void videoGetPad(OSContPad *pad)
     pad->button = buttons;
 }
 
+/* Settings save to midas.ini the moment they change, so a folder Windows will not
+ * let the game write loses every change without a word. Say so once at start. */
+static void videoIniWritableCheck(void)
+{
+    extern FILE *portRootFopen(const char *name, const char *mode);
+    FILE *f;
+
+    if (getenv("GE_WINDOW") != NULL || getenv("GE_NOINISAVE") != NULL)
+    {
+        return; /* harness runs never write the ini */
+    }
+    f = portRootFopen("midas.ini", "a");
+    if (f != NULL)
+    {
+        fclose(f);
+        return;
+    }
+    portConLogf("ge: midas.ini: the game folder is not writable, settings will not be saved\n");
+    portShowErrorBox("Project Midas: settings will not be saved",
+                     "Project Midas cannot write midas.ini in its own folder, so any settings you change "
+                     "will be lost when you quit.\n\n"
+                     "Move the game folder somewhere you can write to, such as C:\\Games\\ProjectMidas. "
+                     "Avoid Program Files. If the folder is under Documents or Desktop, Windows "
+                     "Controlled Folder Access may be blocking it.");
+}
+
 s32 videoInit(void)
 {
     struct GfxInitSettings set = {0}; /* zero the fields we don't set */
@@ -4597,6 +4652,7 @@ s32 videoInit(void)
         portOptCaptureDefaults(); /* before the ini overwrites them */
     }
     videoLoadConfig(); /* midas.ini (needs no SDL init - scancode names are static) */
+    videoIniWritableCheck();
 
     { /* GE_WINDOW=WxH: override midas.ini window size (automated capture runs
        * verify widescreen without editing the user's config) */
@@ -5209,9 +5265,12 @@ s32 portMouseBlocksAutoAim(s32 player)
     extern s32 portInputP1Device(void);     /* input_pc.c: 0 = keyboard and mouse own player 1 */
     extern s32 portInputP1KbmMuted(void);
     extern s32 portInputOptionGet(const char *key, s32 *out);
+    extern s32 get_is_ramrom_flag(void);    /* demo playback */
     s32 mouse = 1;
 
-    if (s_CfgMouseAutoAim || player != 0)
+    /* a demo replays a recorded N64 pad, so it keeps the Auto-Aim it was
+     * recorded with, whatever the live player 1 device is */
+    if (s_CfgMouseAutoAim || player != 0 || get_is_ramrom_flag() != 0)
     {
         return 0;
     }
