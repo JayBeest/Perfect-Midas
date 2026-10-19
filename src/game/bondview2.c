@@ -7369,8 +7369,6 @@ void bondviewProcessInput(s8 stick_x, s8 stick_y, u16 buttons, u16 oldbuttons)
              * buttons can lean. Uses the twin-stick +-30 of 85 threshold and
              * ORs in, so the vanilla C-button lean still works. */
             extern s32 portJoyPortHeld(s32 act);
-            extern s32 portJoyPortActZoomIn(void);
-            extern s32 portJoyPortActZoomOut(void);
 
             if (moveData.controlStickXSafe < -30)
             {
@@ -7444,24 +7442,6 @@ void bondviewProcessInput(s8 stick_x, s8 stick_y, u16 buttons, u16 oldbuttons)
                 else
                 {
                     portAimEdgeTurnFromLook(&moveData, ax, ay);
-                }
-            }
-            /* zoom gets its own binds, since modern pads have no C buttons: read
-             * as a LEVEL, so a stick zooms by how far it is pushed and a key
-             * zooms at the 1.x C-button rate of 1.0. As in vanilla, only the
-             * sniper rifle and camera zoom, and only while aiming. */
-            {
-                extern f32 portJoyPortLevel(s32 act);
-                const f32 zi = portJoyPortLevel(portJoyPortActZoomIn());
-                const f32 zo = portJoyPortLevel(portJoyPortActZoomOut());
-
-                if (zi > 0.0f)
-                {
-                    moveData.zoomInFovPersec = zi;
-                }
-                if (zo > 0.0f)
-                {
-                    moveData.zoomOutFovPersec = zo;
                 }
             }
         }
@@ -7897,6 +7877,36 @@ void bondviewProcessInput(s8 stick_x, s8 stick_y, u16 buttons, u16 oldbuttons)
     }
 
     gunSetSightVisible(GUNSIGHTREASON_NOTAIMING, moveData.aiming);
+
+#ifndef TARGET_N64
+    /* ZOOM ON EVERY DEVICE: the Port zoom_in / zoom_out binds are read here,
+     * outside the port-drive branches, so a keyboard bind still works when
+     * player 1's slot is classified N64 (an n64-tagged pad, an N64-named pad,
+     * a raphnet, pad1_inputmode=n64). It used to sit inside the aim branch
+     * gated on !portInputPadIsN64, which skipped the bind entirely on those
+     * slots: the key latched in joy_port.c and nothing read it.
+     *
+     * Read as a LEVEL, so a stick zooms by how far it is pushed and a key
+     * zooms at the 1.x C-button rate of 1.0. As in vanilla, only the sniper
+     * rifle and camera zoom, and only while aiming; a tank is handled above. */
+    if (portBondControlsLive() && g_CurrentPlayer->insightaimmode && g_PlayerIsInTank != 1)
+    {
+        extern f32 portJoyPortLevel(s32 act);
+        extern s32 portJoyPortActZoomIn(void);
+        extern s32 portJoyPortActZoomOut(void);
+        const f32 zi = portJoyPortLevel(portJoyPortActZoomIn());
+        const f32 zo = portJoyPortLevel(portJoyPortActZoomOut());
+
+        if (zi > 0.0f)
+        {
+            moveData.zoomInFovPersec = zi;
+        }
+        if (zo > 0.0f)
+        {
+            moveData.zoomOutFovPersec = zo;
+        }
+    }
+#endif
 
     if (moveData.zoomOutFovPersec > 0)
     {

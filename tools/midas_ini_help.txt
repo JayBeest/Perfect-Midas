@@ -303,8 +303,8 @@ Port actions (extra actions beyond the N64 pad)
   watch_next       | .                | Watch page right
   watch_objectives |                  | Open watch on the objectives page
   detonate         |                  | Detonate remote mines
-  zoom_in          |                  | Zoom in while aiming (held)
-  zoom_out         |                  | Zoom out while aiming (held)
+  zoom_in          | =                | Zoom in while aiming (held)
+  zoom_out         | -                | Zoom out while aiming (held)
   menu_accept      |                  | Menu-only accept
   menu_back        |                  | Menu-only back
   mouse_unlock     | F1               | Release or re-grab the mouse pointer

@@ -146,11 +146,13 @@ static const struct {
      * mines are held (sDetonateUseReload). Append-only: the input_pc.c pad-map
      * rows and launcher BindDefs index this table by position. */
     [PORTACT_DETONATE]         = { "detonate",         "",         1 },
-    /* HELD levels, not taps: you zoom for as long as you hold them. Unbound
-     * by default - the C buttons still zoom on the shipped keyboard layout,
-     * so binding these over the top would give one key two jobs. */
-    [PORTACT_ZOOM_IN]          = { "zoom_in",          "",         0 },
-    [PORTACT_ZOOM_OUT]         = { "zoom_out",         "",         0 },
+    /* HELD levels, not taps: you zoom for as long as you hold them. The C
+     * buttons still zoom on the shipped keyboard layout, but a keyboard player
+     * had no zoom bind of their own; "=" and "-" read as zoom in / out. The
+     * C-button path is untouched: bondview2.c takes the larger of the two, so
+     * neither input cancels the other. */
+    [PORTACT_ZOOM_IN]          = { "zoom_in",          "=",        0 },
+    [PORTACT_ZOOM_OUT]         = { "zoom_out",         "-",        0 },
     /* unbound: use and the gadget buttons already do both, and a default here
      * would hand one key two jobs */
     [PORTACT_MENU_ACCEPT]      = { "menu_accept",      "",         1 },
