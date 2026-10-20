@@ -79,7 +79,7 @@ function Common([string]$dir) {
     Copy-Item (Join-Path $root "tools\midas_ini_help.txt")  $dir
     Copy-Item (Join-Path $root "LICENSE") (Join-Path $dir "LICENSE.txt")
     Copy-Item (Join-Path $root "tools\THIRD_PARTY_NOTICES.txt") $dir
-    "Project Midas - $Name`r`n$stamp`r`n`r`nProject Midas is a PC port of GoldenEye 007. It needs your own GoldenEye 007 (USA) cart image.`r`n`r`n1. Put the cart image in the Data folder (see Data/README.txt).`r`n2. Run the game.`r`n`r`nSettings are in midas.ini, written on first run. Delete it to restore the defaults. See midas_ini_help.txt for every setting.`r`n" |
+    "Project Midas - $Name`r`n$stamp`r`n`r`nProject Midas is a PC port of GoldenEye 007. It needs your own GoldenEye 007 (USA) cart image.`r`n`r`n1. Put the cart image in the Data folder (see Data/README.txt).`r`n2. Run the game.`r`n`r`nSettings are in midas.ini, written on first run. Delete it to restore the defaults. See midas_ini_help.txt for every setting.`r`n`r`nLICENSE.txt covers the Project Midas code. Third-party code keeps its own license; see THIRD_PARTY_NOTICES.txt.`r`n" |
         Set-Content -Encoding ASCII (Join-Path $dir "README.txt")
 }
 
