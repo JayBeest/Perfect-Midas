@@ -870,12 +870,8 @@ void osSetThreadPri(OSThread *t, OSPri pri)
 
 void osCreateMesgQueue(OSMesgQueue *mq, OSMesg *msgBuf, s32 count)
 {
-    mq->mtqueue = NULL;
-    mq->fullqueue = NULL;
-    mq->validCount = 0;
-    mq->first = 0;
-    mq->msgCount = count;
-    mq->msg = msgBuf;
+    /* no blocked threads and no pending messages; the rest is zero */
+    *mq = (OSMesgQueue){ .msgCount = count, .msg = msgBuf };
 }
 
 s32 osSendMesg(OSMesgQueue *mq, OSMesg msg, s32 flag)

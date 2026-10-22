@@ -5309,7 +5309,7 @@ static inline void ge_tile_touched(uint8_t tile) {
 
 static void gfx_dp_set_texture_image(uint32_t format, uint32_t size, uint32_t width, uint32_t tex_flags, const void* addr) {
     if (ge_texlog_now()) {
-        fprintf(stderr, "texlog: SETTIMG fmt=%u siz=%u w=%u addr=%p\n", format, size, width, addr);
+        fprintf(stderr, "texlog: SETTIMG %p format/size=%u/%u width=%u\n", addr, format, size, width);
     }
     rdp.texture_to_load.addr = (const uint8_t*)addr;
     rdp.texture_to_load.siz = size;
@@ -5374,8 +5374,8 @@ static void gfx_dp_set_tile(uint8_t fmt, uint32_t siz, uint32_t line, uint32_t t
 
 static void gfx_dp_set_tile_size(uint8_t tile, uint16_t uls, uint16_t ult, uint16_t lrs, uint16_t lrt) {
     if (ge_texlog_now()) {
-        fprintf(stderr, "texlog: SETTILESIZE tile=%u uls=%u ult=%u lrs=%u lrt=%u (w=%u h=%u)\n",
-                tile, uls, ult, lrs, lrt, (lrs - uls + 4) / 4, (lrt - ult + 4) / 4);
+        fprintf(stderr, "texlog: SETTILESIZE tile %u s=[%u,%u] t=[%u,%u] -> %ux%u texels\n",
+                tile, uls, lrs, ult, lrt, (lrs - uls + 4) / 4, (lrt - ult + 4) / 4);
     }
     {
         const auto& t = rdp.texture_tile[tile];
