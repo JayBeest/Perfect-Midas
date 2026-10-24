@@ -43,10 +43,10 @@ unsigned portAudioPaceRefill(unsigned queued_bytes, unsigned target,
         return 0; /* less than one aligned sample frame: not worth a call */
     }
 
+    /* The clamp happens once, below, after the alignment round-up. A second
+     * guard here would be dead: rounding up from any value at or above
+     * max_frame lands above max_frame, so the final clamp subsumes it. */
     samples = deficit / PACE_BYTES_PER_SAMPLE;
-    if (samples > cfg->max_frame) {
-        samples = cfg->max_frame;
-    }
 
     /* Round UP to the synthesizer's alignment, not down. Rounding down loses a
      * few samples on EVERY pump, which is a systematic drain: at 300 fps that
@@ -57,7 +57,14 @@ unsigned portAudioPaceRefill(unsigned queued_bytes, unsigned target,
         samples += cfg->frame_align - (samples % cfg->frame_align);
     }
     if (samples > cfg->max_frame) {
-        samples = cfg->max_frame; /* already a multiple of the alignment */
+        /* Rounding up can cross max_frame. Align DOWN to the largest aligned
+         * request that still fits, rather than assuming max_frame is itself a
+         * multiple of frame_align: with max_frame=1000, align=16, clamping to
+         * 1000 returns an unaligned request (1000 % 16 == 8), which contradicts
+         * the "aligned and never more than max_frame" contract above. The
+         * pump's 1024 is a multiple of 16, so this only bites a caller that
+         * configures otherwise. */
+        samples = cfg->max_frame - cfg->max_frame % cfg->frame_align;
     }
 
     return samples;

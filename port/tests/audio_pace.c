@@ -44,6 +44,7 @@
 #define BYTES_PER_SAMPLE 4u
 #define CAP         16384u  /* fixed floor; the real cap scales with the interval */
 #define MAX_INTERVAL_MS 1000u /* covers down to 1 fps */
+#define PUMP_MS     17u     /* a 60 Hz-ish pump interval, for watchdog pacing */
 
 static const PortAudioPaceCfg cfg = {
     RATE, ALIGN, MAX_FRAME, TARGET, TARGET_MAX, TARGET_STEP, TARGET_EASE,
@@ -177,7 +178,14 @@ static void test_clock_catchup_is_bounded(void)
 
     portAudioPaceClockReset(&c);
 
-    /* A 10 s stall must credit at most catchup_ms, or the pump would replay it. */
+    /* A 10 s stall must credit at most catchup_ms, or the pump would replay it.
+     *
+     * Note for anyone mutation-testing this function: the `dt_ms > catchup_ms`
+     * clamp below and the `credit > catchup*rate` ceiling further down are
+     * redundant on purpose - either one alone bounds the burst, so deleting
+     * either single one leaves this test passing. Delete both and it fails.
+     * The clamp is what a reader expects; the ceiling is the backstop that does
+     * not depend on the caller passing any particular dt. */
     while ((n = portAudioPaceFrame(&c, rendered == 0 ? 10000u : 0u, 0, TARGET, 0, &cfg)) != 0) {
         rendered += n;
     }
@@ -285,6 +293,128 @@ static void test_drain_watchdog(void)
             CHECK(portAudioPaceDrainObserve(&e, 0, 0, now, &cfg) == 0);
         }
     }
+}
+
+static void test_watchdog_measures_across_pumps_not_within_one(void)
+{
+    /* The contract above is explicit: consumption is measured from the PREVIOUS
+     * pump's closing depth to THIS pump's opening depth, "not against the
+     * reading just before it". The distinction is load-bearing whenever the
+     * pump does not refill - a queue sitting above the target - because then a
+     * pump closes where it opened. A within-pump comparison (closed != opened)
+     * sees that as no consumption at all and declares a healthy, draining sink
+     * dead once drain_ms has passed.
+     *
+     * So: byte-identical WITHIN every pump, strictly decreasing BETWEEN pumps.
+     * The cross-pump rule tracks the device; a within-pump rule would stall.
+     * The watchdog test above does not cover this, because its healthy sequence
+     * refills (opened != closed) and a within-pump rule would read that refill
+     * as consumption and pass. */
+    PortAudioPaceDrain d = {0, 0, 0, 0};
+    unsigned now = 0;
+    unsigned q = 4096; /* above the target, so the pump has nothing to refill */
+    unsigned pumps = cfg.drain_ms / PUMP_MS + 16u; /* derived: outlast drain_ms */
+    unsigned i;
+
+    CHECK(q > TARGET); /* genuinely above the mark, or the pump would refill */
+    CHECK(portAudioPaceDrainObserve(&d, q, q, now, &cfg) == 0);
+    for (i = 0; i < pumps; i++) {
+        now += PUMP_MS;
+        q -= 24; /* ~16% of a 22050 Hz stereo drain; the pump closed where it opened */
+        CHECK(q > 0); /* never wrap: the case must stay the one described */
+        CHECK(portAudioPaceDrainObserve(&d, q, q, now, &cfg) == 0);
+    }
+    /* The loop must have outlasted the threshold, or this test would pass with
+     * a within-pump detector and prove nothing. Derived from cfg.drain_ms
+     * rather than hard-coded, so retuning the config cannot silently gut it. */
+    CHECK(now > cfg.drain_ms);
+
+    /* And the contrast, so the case above cannot be satisfied by never
+     * flagging a stall: a queue identical within AND across pumps is a frozen
+     * device, and must be reported. */
+    {
+        PortAudioPaceDrain f = {0, 0, 0, 0};
+        unsigned t = 0;
+
+        CHECK(portAudioPaceDrainObserve(&f, q, q, t, &cfg) == 0);
+        CHECK(portAudioPaceDrainObserve(&f, q, q, t + DRAIN_MS, &cfg) == 1);
+    }
+}
+
+/* ---- configuration guards and saturation -------------------------------- */
+
+static void test_refill_rejects_an_unusable_config(void)
+{
+    PortAudioPaceCfg z = cfg;
+
+    /* frame_align == 0 would make the alignment modulo a division by zero, and
+     * this is the case that actually pins the guard: on x86 it traps, on arm64
+     * it silently yields 0. Reached on both the refill and the clock path. */
+    z.frame_align = 0;
+    CHECK(portAudioPaceRefill(0, TARGET, &z) == 0);
+
+    /* max_frame < frame_align cannot express one aligned unit. Honest note:
+     * now that the clamp rounds DOWN, this returns 0 even without the early
+     * guard, so the assertion documents the contract rather than pinning that
+     * branch. Kept because a caller reading this expects 0, and because the
+     * guard makes the intent explicit at the top of the function. */
+    z = cfg;
+    z.max_frame = ALIGN - 1;
+    CHECK(portAudioPaceRefill(0, TARGET, &z) == 0);
+
+    /* The same guard on the clock path. */
+    {
+        PortAudioPaceClock c;
+        PortAudioPaceCfg w = cfg;
+
+        portAudioPaceClockReset(&c);
+        w.frame_align = 0;
+        CHECK(portAudioPaceFrame(&c, 17, 0, TARGET, 0, &w) == 0);
+        CHECK(portAudioPaceFrame(&c, 17, 0, TARGET, 1, &w) == 0);
+    }
+}
+
+static void test_refill_stays_aligned_when_the_clamp_binds(void)
+{
+    /* max_frame is not required to be a multiple of frame_align. When the
+     * clamp binds, rounding UP to the alignment overshoots it, so the request
+     * has to come back down to the largest aligned value that still fits.
+     * Before this was pinned, max_frame=1000/align=16 asked for 1000 samples
+     * (1000 % 16 == 8) - unaligned, and therefore not what alAudioFrame wants. */
+    PortAudioPaceCfg odd = cfg;
+    unsigned targets[4] = { 4096u, 8192u, 16384u, 65536u };
+    unsigned i;
+
+    odd.max_frame = 1000;
+    for (i = 0; i < 4; i++) {
+        unsigned n = portAudioPaceRefill(0, targets[i], &odd);
+
+        CHECK(n > 0);
+        CHECK(n % ALIGN == 0);
+        CHECK(n <= odd.max_frame);
+    }
+}
+
+static void test_geometry_saturates_instead_of_wrapping(void)
+{
+    PortAudioPaceCfg big = cfg;
+    unsigned dt;
+    unsigned prev = 0;
+
+    /* Absurd inputs clamp to UINT_MAX rather than wrapping to a tiny backlog. */
+    big.rate = 0xFFFFFFFFu;
+    CHECK(portAudioPaceMinTarget(1000u, &big) == 0xFFFFFFFFu);
+    CHECK(portAudioPaceCap(0xFFFFFFFFu, &cfg) == 0xFFFFFFFFu);
+
+    /* And the interval floor never falls as the pump interval grows: a slower
+     * frame rate can only mean more audio to bridge, never less. */
+    for (dt = 0; dt <= 2 * MAX_INTERVAL_MS; dt += 7) {
+        unsigned v = portAudioPaceMinTarget(dt, &cfg);
+
+        CHECK(v >= prev);
+        prev = v;
+    }
+    CHECK(prev == portAudioPaceMinTarget(MAX_INTERVAL_MS, &cfg));
 }
 
 /* ---- closed-loop simulation -------------------------------------------- */
@@ -421,7 +551,12 @@ static void test_simulation_refills_a_dry_start(void)
     /* A device that opens empty must be filled, not left starved. */
     simulate(60, 0, 10, &r, 0, CAP);
 
-    CHECK(r.min_bytes > TARGET / 2 || r.dry <= 1);
+    /* Strictly: the first pump with a sink fills to the target, so the depth is
+     * already above half the target. (simulate() samples this AFTER the refill
+     * and BEFORE the device drain, where the minimum settles at exactly TARGET;
+     * post-drain it is TARGET - one drain interval, still above half.) The
+     * earlier `|| r.dry <= 1` escape let this pass without that being true. */
+    CHECK(r.min_bytes > TARGET / 2);
     CHECK(r.max_bytes >= TARGET);
     CHECK(r.consumed > 0);
 }
@@ -565,6 +700,11 @@ int main(void)
 
     test_target_ratchets_and_eases();
     test_drain_watchdog();
+    test_watchdog_measures_across_pumps_not_within_one();
+
+    test_refill_rejects_an_unusable_config();
+    test_refill_stays_aligned_when_the_clamp_binds();
+    test_geometry_saturates_instead_of_wrapping();
 
     test_simulation_holds_the_queue();
     test_simulation_refills_a_dry_start();

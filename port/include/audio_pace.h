@@ -99,6 +99,9 @@ unsigned portAudioPaceFrame(PortAudioPaceClock *c, unsigned dt_ms,
 /*
  * Samples to render to restore the target depth, aligned and clamped. Positive
  * or zero; never asks for more than cfg->max_frame.
+ *
+ * max_frame need not be a multiple of frame_align: when the clamp binds, the
+ * result is rounded DOWN to the largest aligned request that still fits.
  */
 unsigned portAudioPaceRefill(unsigned queued_bytes, unsigned target,
                              const PortAudioPaceCfg *cfg);
