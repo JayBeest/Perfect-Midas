@@ -4140,7 +4140,7 @@ void sub_GAME_7F07E7CC(void) {
 #endif
     animInit(WATCH_MODEL(g_CurrentPlayer), itemheader, WATCH_MODEL_DATA(g_CurrentPlayer));
     modelSetScale(WATCH_MODEL(g_CurrentPlayer), c_item_entries[41].scale * 0.10000001f);
-    modelSetAnimation(WATCH_MODEL(g_CurrentPlayer), (ModelAnimation *)&ptr_animation_table->data[PTR_ANIM_bond_watch], 0, 0.0f, 0.5f * watch_transition_time, 0.0f);
+    modelSetAnimation(WATCH_MODEL(g_CurrentPlayer), (ModelAnimation *)&ptr_animation_table->data[PTR_ANIM_bond_watch], 0, 0.0f, 0.5f * bondviewWatchRate(), 0.0f);
     g_CurrentPlayer->step_in_view_watch_animation = 0;
 }
 

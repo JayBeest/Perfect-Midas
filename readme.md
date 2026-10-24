@@ -39,6 +39,8 @@ An older `ge.ini` is renamed to `midas.ini` automatically on first run.
 
 For a native macOS build, see [the macOS instructions](docs/macos.md). Building on macOS does not require a ROM or extracted assets; playing requires your own US cart image.
 
+For every platform, the CMake options and the clean-build steps, see [BUILD.md](BUILD.md).
+
 The Windows and Linux builds below run in Docker, which has their tools and libraries. You also need the GE (USA) cart as `baserom.u.z64` in the repository root:
 
 ```

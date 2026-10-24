@@ -297,6 +297,8 @@ tools/ido5.3_recomp is a vendored copy of ido-static-recomp by Emill, now
 maintained by decompals (https://github.com/decompals/ido-static-recomp).
 The upstream project publishes no license, so no license text is
 reproduced here and it is not covered by the Project Midas MIT license.
+
+
 MGB64 native asset conversion
 ----------------------------
 Adapted from MGB64 commit 0d1d40b4cde18302ec9789853a50f5545e679062:

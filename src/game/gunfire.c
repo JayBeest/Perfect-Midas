@@ -7679,6 +7679,22 @@ static Gfx *portTargetRectQ(Gfx *g, s32 x1q, s32 y1q, s32 x2q, s32 y2q)
     return g + 1;
 }
 
+/* CROSSHAIR PRECISION (bondwalk2.c g_portRectPrecise): on unless GE_XHAIRQUANT=1,
+ * which restores the old 10.2-snapped sight for A/B. */
+static s32 portXhairPrecise(void)
+{
+    static s32 env = -1;
+
+    if (env < 0)
+    {
+        extern char *getenv(const char *);
+        const char *e = getenv("GE_XHAIRQUANT");
+
+        env = (e != NULL && e[0] != '0') ? 0 : 1;
+    }
+    return env;
+}
+
 static void portDrawTargetPlus(Gfx **gdl)
 {
     extern f32 portAimReachX(void);
