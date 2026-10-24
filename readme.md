@@ -20,6 +20,7 @@ Files next to the executable:
 | Path | What it is |
 | --- | --- |
 | `midas.ini` | Settings. Written on first run; delete it to restore the defaults. See `midas_ini_help.txt`. |
+| `console_help.txt` | The in-game console (`` ` ``), and the audio pump diagnostics `cl_audio_pump` / `cl_audio_log`. |
 | `Data/` | Your cart image goes here. |
 | `Data/Saves/eeprom.bin` | Save file. |
 | `Data/Profiles/` | Player profiles (`.geprofile`) and lifetime multiplayer stats (`.gestats`). |
@@ -30,6 +31,7 @@ Files next to the executable:
 | `gamecontrollerdefault.txt` | Built-in controller layouts. |
 | `gamecontrolleruser.txt` | Your saved controller layouts. |
 | `Data/Logs/ge_direct.log` | The run log on Windows (the game opens no console window). |
+| `Data/Logs/audio_pump.log` | Written while `cl_audio_log 1` is running: one line a second of audio pump state. |
 | `Data/Logs/crash.log` | Written if the game crashes. |
 | `Mods/` | Reserved for modded carts. This build loads the stock cart only. |
 

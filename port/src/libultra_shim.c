@@ -37,6 +37,7 @@
 #include <ultra64.h>
 #include "libultra/io/controller.h" /* OSPifRam + the __osCont/__osSi internal API */
 #include "port_libultra.h"
+#include "port_audio_stats.h"
 #include "game/file.h"  /* save_data / smallSave: EEPROM import from big-endian saves */
 
 /* port_console.c: same output as the fprintf(stderr, ...) this replaced,
@@ -179,6 +180,27 @@ __attribute__((weak)) s32 portHighLod(void)
 __attribute__((weak)) s32 portVideoShowFps(void)
 {
     return 0;
+}
+
+/** Weak defaults: no audio pump overlay headless; audio_pc.c overrides. The
+ *  overlay draw lives in bondview2.c, so any headless target that links that
+ *  file without audio_pc.c resolves here instead of failing to link. */
+__attribute__((weak)) s32 portAudioPumpStatsShown(void)
+{
+    return 0;
+}
+
+__attribute__((weak)) void portAudioPumpStatsSet(s32 on)
+{
+    (void) on;
+}
+
+__attribute__((weak)) void portAudioPumpStatsGet(struct PortAudioPumpStats *out)
+{
+    if (out != NULL)
+    {
+        memset(out, 0, sizeof(*out)); /* nothing measured: zeroes, not junk */
+    }
 }
 
 /** Weak default: nothing extra unlocked headless; video.c overrides from midas.ini. */

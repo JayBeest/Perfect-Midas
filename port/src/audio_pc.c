@@ -68,11 +68,15 @@
 
 #include <SDL.h>
 
+#include <stdio.h>
+#include <time.h>   /* the log's start stamp only; the pump itself never reads a clock */
+
 #include <ultra64.h>
 #include <PR/libaudio.h>
 #include <PR/abi.h>
 
 #include "audio_pace.h"
+#include "port_audio_stats.h"
 
 /* ---- config ------------------------------------------------------------ */
 
@@ -139,6 +143,31 @@ static u32 s_StatSkipped;  /* frames portAcmdValidate refused (played as silence
 static u32 s_StatDry;      /* pumps that found the SDL queue already empty */
 static u32 s_StatOverCap;  /* rendered frames dropped at PORT_AUDIO_QUEUE_MAX */
 static u32 s_StatMaxGapMs; /* longest wait between two pumps */
+
+/* Live snapshot for the in-game overlay (console cl_audio_pump). The
+ * instantaneous fields are refreshed on every pump; the rates are accumulated
+ * and published once per PORT_AUDIO_STATS_WINDOW_MS. Everything here is
+ * observation only - nothing in the pacing policy reads it. */
+static s32 s_StatsShown;
+/* The periodic log file (console cl_audio_log). One line a second is about
+ * 100 bytes, so 6 KB a minute: enough history for a crackle report without
+ * filling a disk during a long session. Flushed per line so a crash keeps the
+ * tail, which is when it is worth having. */
+#define PORT_AUDIO_LOG_MS 1000
+static s32 s_LogShown;
+static FILE *s_LogFile;
+static u32 s_LogTick;
+static u32 s_LogStart;
+static struct PortAudioPumpStats s_Stats;
+static u32 s_StatWinTick;    /* start of the window being accumulated */
+static u32 s_StatWinPumps;
+static u32 s_StatWinBusy;      /* of those pumps, how many rendered samples */
+static u32 s_StatWinRendered;
+static u32 s_StatWinDry;
+static u32 s_StatWinOverCap;
+static u32 s_StatWinSkipped;
+static u32 s_StatWinForced;
+static s32 s_StatWinPrimed;  /* restart the window cleanly after being off */
 
 /* ---- aspMain interpreter ------------------------------------------------ */
 
@@ -1013,6 +1042,165 @@ static void portAudioHealth(void)
     s_StatMaxGapMs = 0;
 }
 
+/* ---- live stats for the in-game overlay (console cl_audio_pump) ----- */
+
+s32 portAudioPumpStatsShown(void)
+{
+    return s_StatsShown;
+}
+
+void portAudioPumpStatsSet(s32 on)
+{
+    s_StatsShown = (on != 0) ? 1 : 0;
+}
+
+void portAudioPumpStatsGet(struct PortAudioPumpStats *out)
+{
+    if (out != NULL) {
+        *out = s_Stats;
+    }
+}
+
+s32 portAudioPumpLogShown(void)
+{
+    return s_LogShown;
+}
+
+/* Opens the log and writes its legend. Returns 0 if the file could not be made,
+ * so the console can say so instead of reporting a log that writes nowhere. */
+static s32 portAudioLogOpen(void)
+{
+    extern const char *portLogPath(const char *name); /* main.c: Data/Logs/<name> */
+
+    if (s_LogFile != NULL) {
+        return 1;
+    }
+    s_LogFile = fopen(portLogPath("audio_pump.log"), "w");
+    if (s_LogFile == NULL) {
+        portConLogf("ge: audio: cannot write Data/Logs/audio_pump.log; logging stays off\n");
+        return 0;
+    }
+    fprintf(s_LogFile,
+            "# Project Midas audio pump log (console: cl_audio_log 1)\n"
+            "# One line per second. Fields:\n"
+            "#   t      ms since logging started\n"
+            "#   FPS/TPS rendered frames and simulation ticks per second\n"
+            "#   pmp/s  pump calls per second (the pump runs every scheduler\n"
+            "#          iteration, so this is much larger than the frame rate)\n"
+            "#   rnd/s  of those calls, the ones that rendered any samples\n"
+            "#   que    bytes queued / the target depth it is steered toward,\n"
+            "#          each also given in ms of audio: that pair IS the latency\n"
+            "#   cap    backlog ceiling in bytes\n"
+            "#   snd    audio rendered / the wall time it was worth, as raw sample\n"
+            "#          counts AND ms. The samples are the exact figures - at\n"
+            "#          22050 Hz one sample is 0.045 ms, so ms alone rounds away a\n"
+            "#          slow leak. The ms pair is for reading at a glance.\n"
+            "#   dry    pumps that found the sink empty and played silence\n"
+            "#   over   frames refused because they would not fit under cap\n"
+            "#   skip   frames the RSP validator rejected (played as silence)\n"
+            "#   frc    forced frames (music track-stop scheduling)\n"
+            "#   stall  1 = the device has consumed nothing for 2 s\n"
+            "#   clk    wall-clock credit, ms of audio; 0 when a device paces\n"
+            "#   dev    device sample rate in Hz, 0 when no device is open\n");
+    /* The start stamp is what makes this file correlatable: nothing else the
+     * game logs carries a wall clock, so the session's absolute start plus the
+     * relative t= on each line is what ties a line to a crash.log mtime, a
+     * ge: stats line, or a user's "it happened around 21:40". t= stays
+     * relative and monotonic, because a clock step must not reorder the run. */
+    {
+        const time_t now_wall = time(NULL);
+        const struct tm *tmv = localtime(&now_wall);
+
+        fprintf(s_LogFile, "# started %04d-%02d-%02d %02d:%02d:%02d (local);"
+                           " t= below is ms since this instant\n",
+                tmv ? tmv->tm_year + 1900 : 0, tmv ? tmv->tm_mon + 1 : 0,
+                tmv ? tmv->tm_mday : 0, tmv ? tmv->tm_hour : 0,
+                tmv ? tmv->tm_min : 0, tmv ? tmv->tm_sec : 0);
+    }
+    fflush(s_LogFile);
+    return 1;
+}
+
+void portAudioPumpLogSet(s32 on)
+{
+    on = (on != 0) ? 1 : 0;
+    if (on == s_LogShown) {
+        return;
+    }
+    if (on) {
+        /* Only claim to be logging if the file really opened. */
+        if (!portAudioLogOpen()) {
+            return;
+        }
+        /* The file was truncated, so the timestamp starts again at zero. */
+        s_LogStart = 0;
+        s_LogTick = 0;
+    } else if (s_LogFile != NULL) {
+        fprintf(s_LogFile, "# logging stopped by cl_audio_log 0\n");
+        fclose(s_LogFile);
+        s_LogFile = NULL;
+    }
+    s_LogShown = on;
+}
+
+/* One line for the current window. Called from the pump; the stats it reads are
+ * the same ones the overlay draws, so the file and the screen cannot disagree. */
+static void portAudioLogLine(u32 now)
+{
+    const struct PortAudioPumpStats *st = &s_Stats;
+    u32 pps, rps, snd_ms, need_ms, que_ms, target_ms;
+
+    if (!s_LogShown || s_LogFile == NULL || st->rate == 0) {
+        return;
+    }
+    if (s_LogStart == 0) {
+        s_LogStart = now;
+        s_LogTick = now;
+        return; /* first line lands one interval after logging starts */
+    }
+    if (now - s_LogTick < PORT_AUDIO_LOG_MS) {
+        return;
+    }
+    s_LogTick = now;
+
+    pps = (st->window_ms != 0)
+        ? (u32) (((unsigned long long) st->pumps * 1000u) / st->window_ms) : 0;
+    rps = (st->window_ms != 0)
+        ? (u32) (((unsigned long long) st->busy * 1000u) / st->window_ms) : 0;
+    snd_ms = (u32) (((unsigned long long) st->rendered * 1000u + st->rate / 2u) / st->rate);
+    need_ms = (u32) (((unsigned long long) st->needed * 1000u + st->rate / 2u) / st->rate);
+    /* Bytes to ms of audio at this rate: 22050 stereo s16 is 88200 B/s, so
+     * 3556 B is 40 ms. This pair is the latency a listener actually hears.
+     * Rounded, not truncated: 3520 B is 39.9 ms and printing that as 39 beside
+     * a 40 makes an on-target queue look short by a millisecond. */
+    que_ms = (u32) (((unsigned long long) st->queue * 1000u + (unsigned long long) st->rate * 2u)
+                    / ((unsigned long long) st->rate * 4u));
+    target_ms = (u32) (((unsigned long long) st->target * 1000u + (unsigned long long) st->rate * 2u)
+                    / ((unsigned long long) st->rate * 4u));
+
+    {
+        extern s32 g_PortStatFps; /* frametiming.c, the same pair the strip uses */
+        extern s32 g_PortStatTps;
+
+        /* Both units on purpose. The screen shows one each, because a glance
+         * needs one answer; this file is read by someone chasing a defect, so it
+         * carries the exact sample counts as well. */
+        fprintf(s_LogFile,
+                "t=%ums FPS %d TPS %d pmp %u/s rnd %u/s"
+                " que %u/%uB %u/%ums cap %uB"
+                " snd %u/%usmp %u/%ums"
+                " dry %u over %u skip %u frc %u stall %d clk %dms dev %uHz\n",
+                now - s_LogStart, (int) g_PortStatFps, (int) g_PortStatTps,
+                pps, rps,
+                st->queue, st->target, que_ms, target_ms, st->cap,
+                st->rendered, st->needed, snd_ms, need_ms,
+                st->dry, st->overcap, st->skipped, st->forced,
+                (int) st->stalled, (int) (st->credit / (s32) st->rate),
+                st->has_sink ? st->rate : 0u);
+    }
+    fflush(s_LogFile);
+}
+
 /**
  * Size of the next audio frame when the mixer must advance outside the paced
  * path (a forced frame). One field of output, aligned like the vanilla
@@ -1053,6 +1241,9 @@ void portAudioPump(void)
     u32 queue_max;
     u32 rendered = 0;
     u32 span_ms = 0;
+    s32 dry_now = 0;      /* this pump starved the sink (overlay stats) */
+    s32 over_cap_now = 0; /* this pump refused a frame at the cap */
+    s32 skipped_now = 0;  /* this pump played a rejected frame as silence */
 
     /* REENTRANCY GUARD: portPumpEvents fires from inside blocking
      * osRecvMesg, and the AL client handlers (sndp, the CSP sequencers)
@@ -1137,6 +1328,7 @@ void portAudioPump(void)
             s_SinkPrimed = 1;
         }
         s_RanDry = has_sink && !by_clock && queued == 0 && s_SinkPrimed;
+        dry_now = s_RanDry;
         if (s_RanDry) {
             s_StatDry++;
         }
@@ -1169,6 +1361,7 @@ void portAudioPump(void)
         if (has_sink && !by_clock && !s_ForceOneFrame &&
             queued + samples * 4 > queue_max) {
             s_StatOverCap++;
+            over_cap_now = 1;
             break;
         }
 
@@ -1184,6 +1377,7 @@ void portAudioPump(void)
             if (s_StatSkipped != skipped) {
                 /* nothing was written: play silence, not the previous frame again */
                 memset(frameBuf, 0, samples * 4);
+                skipped_now = 1;
             }
         }
 
@@ -1279,6 +1473,82 @@ void portAudioPump(void)
         }
         (void) portAudioStalled(now); /* reopen it if it stays dead */
     }
+
+    /* Console cl_audio_pump: keep the overlay's snapshot current. The
+     * instantaneous fields are written every pump so the block moves with the
+     * game; the rates are published once a window so they are readable rather
+     * than flickering. Both are observation only - nothing below feeds back
+     * into the pacing decisions above. */
+    s_Stats.queue = queued;
+    s_Stats.target = target;
+    s_Stats.cap = queue_max;
+    s_Stats.rate = PORT_AUDIO_RATE;
+    s_Stats.stalled = s_Stalled;
+    s_Stats.has_sink = has_sink;
+    s_Stats.credit = (s32) s_Clock.credit;
+
+    /* Either consumer needs the window accumulated: the overlay to draw the
+     * rates, the log to write them. Tying this to the overlay alone made
+     * `cl_audio_log 1` on its own write a file full of zeroes. */
+    if (s_StatsShown || s_LogShown) {
+        if (!s_StatWinPrimed) {
+            s_StatWinPrimed = 1;
+            s_StatWinTick = now;
+            s_StatWinPumps = 0;
+            s_StatWinBusy = 0;
+            s_StatWinRendered = 0;
+            s_StatWinDry = 0;
+            s_StatWinOverCap = 0;
+            s_StatWinSkipped = 0;
+            s_StatWinForced = 0;
+        }
+        s_StatWinPumps++;
+        /* portAudioPump is called every scheduler iteration, not once per
+         * drawn frame, and most calls find the queue already at target and
+         * render nothing. Counting the ones that did is what makes the call
+         * rate interpretable instead of just large. */
+        if (rendered != 0) {
+            s_StatWinBusy++;
+        }
+        s_StatWinRendered += rendered;
+        s_StatWinDry += (u32) dry_now;
+        s_StatWinOverCap += (u32) over_cap_now;
+        s_StatWinSkipped += (u32) skipped_now;
+        s_StatWinForced += (u32) s_ForceOneFrame;
+
+        if (now - s_StatWinTick >= PORT_AUDIO_STATS_WINDOW_MS) {
+            const u32 window = now - s_StatWinTick;
+
+            s_Stats.pumps = s_StatWinPumps;
+            s_Stats.busy = s_StatWinBusy;
+            s_Stats.window_ms = window;
+            s_Stats.rendered = s_StatWinRendered;
+            /* what that wall time was worth in samples, at the output rate */
+            s_Stats.needed = (u32) (((unsigned long long) window * PORT_AUDIO_RATE) / 1000u);
+            s_Stats.dry = s_StatWinDry;
+            s_Stats.overcap = s_StatWinOverCap;
+            s_Stats.skipped = s_StatWinSkipped;
+            s_Stats.forced = s_StatWinForced;
+            s_Stats.valid = 1;
+            s_StatWinTick = now;
+            s_StatWinPumps = 0;
+            s_StatWinBusy = 0;
+            s_StatWinRendered = 0;
+            s_StatWinDry = 0;
+            s_StatWinOverCap = 0;
+            s_StatWinSkipped = 0;
+            s_StatWinForced = 0;
+        }
+    } else {
+        /* Re-enabling restarts from a clean window rather than reporting the
+         * gap since it was last on. */
+        s_StatWinPrimed = 0;
+    }
+
+    /* console cl_audio_log: the same numbers to Data/Logs/audio_pump.log. Kept
+     * independent of the overlay, so a report can carry the history without
+     * anyone having watched the corner of the screen. */
+    portAudioLogLine(now);
 
     /* GE_AUDIODBG=1: one line a second with the numbers that decide the pace,
      * so a starvation report can be read instead of guessed at. */

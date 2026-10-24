@@ -500,12 +500,13 @@ if(GE_VIDEO)
     endif()
     # the files a release ships beside the game, so a fresh build runs the
     # same: controller mappings and layouts (without them a new install has
-    # no default binds), the ini help and the base shader list
+    # no default binds), the ini and console help, and the base shader list
     add_custom_command(TARGET ge POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${CMAKE_SOURCE_DIR}/tools/gamecontrollerdb.txt
             ${CMAKE_SOURCE_DIR}/tools/gamecontrollerdefault.txt
             ${CMAKE_SOURCE_DIR}/tools/midas_ini_help.txt
+            ${CMAKE_SOURCE_DIR}/tools/console_help.txt
             $<TARGET_FILE_DIR:ge>
         COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:ge>/Data
         COMMAND ${CMAKE_COMMAND} -E copy_if_different

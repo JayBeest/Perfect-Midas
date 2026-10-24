@@ -1,5 +1,6 @@
 #ifndef TARGET_N64
 #include "port_input.h"
+#include "port_audio_stats.h"
 #endif
 #include <ultra64.h>
 #include "game/bgfog.h"
@@ -12659,28 +12660,140 @@ Gfx *bondviewRenderCredits(Gfx *gdl)
 /* The show_fps counter, drawn LAST in the frame by maybe_mp_interface so the
  * pause pillars can't cover it, and outside sub_GAME_7F08AAE8, whose top-text
  * branch skips its overlays and made the counter blink. */
+
+/* One small-font row. The other corner overlays use 0xa for a single row's
+ * backing box and 0xf for a drop to the next block; 0xb fits the Bank Gothic
+ * glyphs with a pixel of air, which is what six stacked rows want. */
+#define PORT_APU_ROW 0xb
+
+/* console cl_audio_pump: the live pump state, at the top-left corner where the
+ * FPS strip draws. Reads the pump's snapshot (audio_pc.c, port_audio_stats.h);
+ * FPS and TPS come from the frame timing code, so this agrees with the strip it
+ * displaces. */
+static Gfx *portDrawAudioPumpStats(Gfx *gdl, s32 x, s32 y)
+{
+    extern s32 g_PortStatFps;                      /* frametiming.c */
+    extern s32 g_PortStatTps;
+    struct PortAudioPumpStats st;
+    char line[6][48];
+    s32 rows = 0;
+    s32 top = y;
+    s32 i;
+
+    portAudioPumpStatsGet(&st);
+
+    /* One theme per row, and every value carries its unit. The first cut mixed
+     * window totals with per-second rates under a single "/s" and read as
+     * nonsense; a reader should never have to know which is which from context.
+     *
+     * Rates are per second. SND is milliseconds of audio, the only unit in
+     * which "are we keeping up" is judgeable at a glance. DRY/OVER/SKIP/FRC
+     * are counts of events in the window and stay dimensionless. */
+    sprintf(line[rows++], "FPS %dfps TPS %dtps",
+            (int) g_PortStatFps, (int) g_PortStatTps);
+    {
+        /* PMP is every pump call; RND is the subset that produced audio.
+         * portAudioPump runs every scheduler iteration, so PMP dwarfs RND and
+         * says nothing about sound on its own - the pair is the point. */
+        u32 pps = (st.valid && st.window_ms != 0)
+                ? (u32) (((unsigned long long) st.pumps * 1000u) / st.window_ms) : 0;
+        u32 rps = (st.valid && st.window_ms != 0)
+                ? (u32) (((unsigned long long) st.busy * 1000u) / st.window_ms) : 0;
+
+        if (pps >= 10000u)
+        {
+            sprintf(line[rows++], "PMP %uk/s RND %u/s",
+                    (unsigned) (pps / 1000u), (unsigned) rps);
+        }
+        else
+        {
+            sprintf(line[rows++], "PMP %u/s RND %u/s", (unsigned) pps, (unsigned) rps);
+        }
+    }
+    sprintf(line[rows++], "QUE %u/%uB CAP %uB", st.queue, st.target, st.cap);
+    /* Rendered against the wall time it was worth. Equal means audio time is
+     * tracking the clock, which is the whole point of the pacing; short means
+     * the sink is starving. */
+    if (st.rate != 0)
+    {
+        sprintf(line[rows++], "SND %ums/%ums",
+                (unsigned) (((unsigned long long) st.rendered * 1000u) / st.rate),
+                (unsigned) (((unsigned long long) st.needed * 1000u) / st.rate));
+    }
+    else
+    {
+        sprintf(line[rows++], "SND %u/%u", (unsigned) st.rendered, (unsigned) st.needed);
+    }
+    sprintf(line[rows++], "DRY %u OVER %u SKIP %u FRC %u",
+            st.dry, st.overcap, st.skipped, st.forced);
+    /* Credit is samples x1000, which is meaningless to read raw; divided by the
+     * rate it is milliseconds of audio, the same unit as SND. */
+    sprintf(line[rows++], "STALL %d CLK %dms DEV %uHz",
+            (int) st.stalled,
+            (st.rate != 0) ? (int) (st.credit / (s32) st.rate) : 0,
+            st.has_sink ? st.rate : 0u);
+
+    gdl = microcode_constructor(gdl);
+    PORT_HUD_ANCHOR_FULL(gdl, PORT_HUD_ANCHOR_LEFT);   /* the overlay sits at the window edge */
+    /* One black backing box for the whole block, as the input overlay does for
+     * its row: a bright sky behind six lines of thin glyphs is unreadable. */
+    gdl = microcode_constructor_related_to_menus(gdl, 0, top - 1, viGetX(),
+                                                 top + rows * PORT_APU_ROW, 0x64);
+    for (i = 0; i < rows; i++)
+    {
+        s32 lx = x;
+        s32 ly = top + i * PORT_APU_ROW;
+
+        /* Same gate the console uses for its rows: a glyph is up to 12 Gfx
+         * commands and this block is ~125 of them, far more than the two or
+         * three digits the FPS strip draws. Rather than overrun the master
+         * display list at the end of a busy frame, stop at the first row that
+         * does not fit - a short block beats corruption. */
+        if (dynGetFreeGfx2(gdl) < 3 + (s32) strlen(line[i]) * 12)
+        {
+            break;
+        }
+        gdl = textRender(gdl, &lx, &ly, line[i], ptrFontBankGothicChars, ptrFontBankGothic,
+                         -1, viGetX(), viGetY(), 0, 0);
+    }
+    PORT_HUD_ANCHOR_OFF(gdl);
+    gdl = combiner_bayer_lod_perspective(gdl);
+
+    return gdl;
+}
+
 static Gfx *portDrawFpsCounter(Gfx *gdl)
 {
+    extern s32 portVideoShowFps(void);      /* video.c; weak 0 headless */
+    extern s32 portAudioPumpStatsShown(void); /* audio_pc.c; weak 0 headless */
+    /* Both are player-1-only corner overlays, so they never compete with the
+     * split-screen quadrants. */
+    const s32 corner_ok = (getPlayerCount() == 1 || get_cur_playernum() == 0);
+    s32 ox = viGetViewLeft() + 2;
+    s32 oy = viGetViewTop() + 2;
+
+    /* Solo full height keeps the top row while paused, since the view snaps 10
+     * lines down at the end of the pause-box ease. */
+    if (getPlayerCount() == 1 && portFullHeightActive())
+    {
+        oy = 2;
+    }
+
     { /* midas.ini [display] show_fps=1 (GE_SHOWFPS env override): rendered
        * frames per second, drawn in-window for fullscreen use, from gfx_sdl2's
-       * 500ms stat window via g_PortStatFps (0 headless). */
-        extern s32 portVideoShowFps(void); /* video.c; weak 0 headless */
-        if (portVideoShowFps() && (getPlayerCount() == 1 || get_cur_playernum() == 0))
+       * 500ms stat window via g_PortStatFps (0 headless).
+       *
+       * SUPPRESSED when the pump block is on: the block carries FPS and TPS
+       * itself, so leaving the digits up would print the same two numbers
+       * twice, one above the other. */
+        if (portVideoShowFps() && !portAudioPumpStatsShown() && corner_ok)
         {
             /* Just the number, in the small Gothic font, two units in from the
              * view's top-left so it stays above the top text box; always
              * anchored to the window's left (TPS is in the log's stats line). */
             static char fpstext[16];
-            s32 fp_x = viGetViewLeft() + 2;
-            s32 fp_y = viGetViewTop() + 2;
-
-            /* Solo full height keeps the top row while paused, since the view
-             * snaps 10 lines down at the end of the pause-box ease; the black
-             * bar the digits sit on is drawn before them. */
-            if (getPlayerCount() == 1 && portFullHeightActive())
-            {
-                fp_y = 2;
-            }
+            s32 fp_x = ox;
+            s32 fp_y = oy;
 
             sprintf(fpstext, "%d", (int) g_PortStatFps);
             gdl = microcode_constructor(gdl);
@@ -12693,6 +12806,15 @@ static Gfx *portDrawFpsCounter(Gfx *gdl)
             gdl = textRenderOutlined(gdl, &fp_x, &fp_y, fpstext, ptrFontBankGothicChars, ptrFontBankGothic, -1, 0x646464FFU, viGetX(), viGetY(), 0, 0);
             PORT_HUD_ANCHOR_OFF(gdl);
             gdl = combiner_bayer_lod_perspective(gdl);
+        }
+    }
+
+    { /* console cl_audio_pump 1: the live pump block, in the corner the strip
+       * uses. It owns that corner whenever it is on, so it starts where the
+       * digits would have, not below them. */
+        if (portAudioPumpStatsShown() && corner_ok)
+        {
+            gdl = portDrawAudioPumpStats(gdl, ox + 1, oy + 1);
         }
     }
     return gdl;
