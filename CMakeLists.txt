@@ -545,4 +545,9 @@ if(GE_PORT_TESTS)
     add_test(NAME native_movement COMMAND native_movement_test)
     add_test(NAME native_prop_collision COMMAND native_prop_collision_test)
     add_test(NAME native_player COMMAND native_player_test)
+
+    # Audio output pacing policy: pure functions, no SDL device and no ROM.
+    # These are the shipped rules the pump obeys, not a model of them.
+    add_executable(audio_pace_test port/tests/audio_pace.c port/src/audio_pace.c)
+    add_test(NAME audio_pace COMMAND audio_pace_test)
 endif()
