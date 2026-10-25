@@ -43,6 +43,32 @@ The code is MIT licensed, so you are free to fork it. If you do, please:
 - link back to this repository,
 - send fixes back here as pull requests so everyone benefits.
 
+## Documentation: what is public
+
+This repository publishes what a contributor needs to **build, run, or report a bug**:
+
+- `README.md`, `PORT.md`, `BUILD.md`, `CLI.md`, `SETTINGS.md`, `CHANGELOG.md`
+- `docs/macos.md` and `docs/port/room-cache.md`
+- the help text that ships with the executable: `tools/midas_ini_help.txt`,
+  `tools/console_help.txt`, `tools/Data_README.txt`
+
+Everything else is the engineering record: audits, design notes, session handoffs, PR
+write-ups. It lives in `docs/private/`, which is gitignored, and in a private engineering
+repository. Earlier commits still contain some of it, so it is cited by commit SHA rather
+than by path.
+
+Two rules follow from that split:
+
+- **A public file never links to or names a private path.** If a comment needs the
+  reasoning, write the reasoning; if it needs a reference, reference a public document.
+- **Nothing is added with `git add -f`.** If the ignore rule and the index disagree, the
+  rule is wrong and gets fixed. That was the old state: `.gitignore` called all of `docs/`
+  private while ten files under it were force-added past it.
+
+`make docs_check` runs `scripts/port/check_docs_tier.sh`, which tests both rules: nothing
+from the private tier is tracked, no tracked file names it, no tracked file is also
+ignored, and the links in the public documents resolve.
+
 ## License
 
 By contributing you agree that your contribution is licensed under the MIT license in [LICENSE](LICENSE). That license covers the port code only; see its "Scope" section.
