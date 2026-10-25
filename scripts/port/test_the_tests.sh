@@ -99,6 +99,46 @@ mutate "$CM" 's/            if \(idx_out != NULL\) \{/            if (1) {/' "ru
     check "rule: mismatch wrote through NULL" kill
 
 echo
+echo "the video env overrides (port/src/video_env.c)"
+VE="$ROOT/port/src/video_env.c"
+TV="$ROOT/port/tests/video_env.c"
+MUT_SRC="$VE"
+run_ve() {
+    local label="$1" want="$2"
+    cc $CC_BASE "$TV" "$W/mut.c" -o "$W/t" 2>"$W/cc.log" || { printf '  NOBUILD  %s\n' "$label"; status=1; return; }
+    if "$W/t" >/dev/null 2>&1; then
+        if [ "$want" = "survive" ]; then printf '  ok       %-50s survives (expected)\n' "$label";
+        else printf '  GAP      %-50s SURVIVED - no test kills this\n' "$label"; status=1; fi
+    else
+        if [ "$want" = "kill" ]; then printf '  ok       %-50s killed\n' "$label";
+        else printf '  BROKEN   %-50s the baseline itself fails\n' "$label"; status=1; fi
+    fi
+}
+ve_mutate() {
+    cp "$VE" "$W/mut.c"
+    perl -0pi -e "$1" "$W/mut.c"
+    if cmp -s "$VE" "$W/mut.c"; then printf '  NO-OP    %s\n' "$2"; status=1; return 1; fi
+}
+ve_mutate 's/return \(classic_on != 0\) && \(tick_env_set != 0\);/return (tick_env_set != 0);/' "tick: ignore the mode" && \
+    run_ve "tick clash announced with the mode off" kill
+ve_mutate 's/return \(classic_on != 0\) && \(tick_env_set != 0\);/return (classic_on != 0);/' "tick: ignore the env" && \
+    run_ve "tick clash announced with no GE_TICKHZ" kill
+ve_mutate 's/    if \(hw_pace && r.value != 0\) \{/    if (0) {/' "roomcache: never refuse" && \
+    run_ve "room_cache re-enabled under hw pacing" kill
+ve_mutate 's/        r.refused = 1;\n        r.value = 0;/        r.refused = 1;\n        r.value = r.value;/' "roomcache: refuse but keep the value" && \
+    run_ve "room_cache refused but still applied" kill
+ve_mutate 's/    if \(r.value < 0 \|\| r.value > 2\) \{/    if (0) {/' "roomcache: no clamp" && \
+    run_ve "room_cache takes an invalid value" kill
+ve_mutate 's/    if \(!classic_on \|\| !mipmap_part_on\) \{/    if (!classic_on) {/' "mipmap: ignore the part" && \
+    run_ve "mipmap clash with the part switched off" kill
+ve_mutate 's/    return \(mipmap_env_on == 0\) \? 1 : 0;/    return (mipmap_env_on != 1) ? 1 : 0;/' "mipmap: unset counts as a clash" && \
+    run_ve "mipmap clash announced when unset" kill
+ve_mutate 's/    r.touched = 1;/    r.touched = 1;\n    if (1) { r.value = 2; return r; }/' "roomcache: ignore the value" && \
+    run_ve "room_cache ignores what GE_ROOMCACHE said" kill
+cp "$VE" "$W/mut.c"
+run_ve "video_env" survive
+
+echo
 echo "the seam (port/src/port_options.c)"
 MUT_SRC="$PO"
 mutate "$PO" 's/strcmp\(key, "n64_aa"\) == 0/strncmp(key, "classic_", 8) == 0/' "choke: wrong key test" && \

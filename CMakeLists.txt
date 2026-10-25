@@ -570,6 +570,12 @@ if(GE_PORT_TESTS)
     add_executable(classic_mode_test port/tests/classic_mode.c port/src/classic_mode.c)
     add_test(NAME classic_mode COMMAND classic_mode_test)
 
+    # The GE_* video overrides that can contradict a mode: GE_TICKHZ against
+    # Classic Mode, GE_ROOMCACHE against hw pacing, GE_HWMIPMAPS against the
+    # mode's mipmaps. Decisions only - video.c keeps the logging.
+    add_executable(video_env_test port/tests/video_env.c port/src/video_env.c)
+    add_test(NAME video_env COMMAND video_env_test)
+
     # ...and that the SETTER actually calls the rule. The audit's console defect
     # was a missing call at that seam, which no test of the rule can see. This
     # links the shipped port_options.c against a fake option table, so the real
