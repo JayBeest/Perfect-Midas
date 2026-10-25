@@ -1,5 +1,11 @@
 ![Project Midas](port/include/presskit/PM%20thin%201%20-%20full.png)
 
+# Project Midas — the base port's play and build guide
+
+> This was the repository's `readme.md`, and it documents the **base port** (Project Midas) that
+> this fork builds on: where the cart goes, which files appear next to the executable, and how to
+> start up faster. The fork's own front door is [README.md](README.md).
+
 # Project Midas
 
 This is a video game about Jimothy's presumed-dead best friend Jarvis turns out to be alive, and in possession of a space laser he intends to point at a city - so Jimothy goes to the Cuban jungle and drops Jarvis off a satellite dish.
