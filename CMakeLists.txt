@@ -552,6 +552,12 @@ if(GE_PORT_TESTS)
     add_executable(audio_pace_test port/tests/audio_pace.c port/src/audio_pace.c)
     add_test(NAME audio_pace COMMAND audio_pace_test)
 
+    # The -n64_aa / -audio_pump / -audio_log argument parse: pure, and worth a
+    # test because a boot flag that is silently ignored looks exactly like one
+    # that worked.
+    add_executable(boot_flags_test port/tests/boot_flags.c port/src/boot_flags.c)
+    add_test(NAME boot_flags COMMAND boot_flags_test)
+
     # Frame/tick statistics of the in-game block: pure functions, so the numbers
     # a player reads in the corner are checked without a window, a GPU or a ROM.
     add_executable(tick_stats_test port/tests/tick_stats.c port/src/tick_stats.c)

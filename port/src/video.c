@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <ultra64.h>
 #include "port_options.h"
+#include "boot_flags.h"   /* the -n64_aa / -audio_pump / -audio_log parse */
 
 #ifdef GE_XBOX
 /* No SDL on the console: the string/keyboard/thread stand-ins live in the
@@ -999,6 +1000,13 @@ s32 portClassicPart(s32 i)
 static int videoClassicViOn(void)
 {
     return s_CfgN64Aa && portClassicPart(CLASSIC_PART_N64AA);
+}
+
+/** 1 while Classic Mode is on ([display] n64_aa, the classic_toggle key's state).
+ *  Read by the -n64_aa boot flag, which reports whether its apply took. */
+s32 portVideoN64AaOn(void)
+{
+    return s_CfgN64Aa;
 }
 
 /** Load hitches are a Classic part; they still only happen under hardware pacing. */
@@ -4825,6 +4833,108 @@ static void videoIniWritableCheck(void)
                      "Controlled Folder Access may be blocking it.");
 }
 
+/* ---- boot flags: the three things a diagnostic launch always wants --------
+ *
+ * `ProjectMidas -n64_aa -audio_pump -audio_log` starts in Classic Mode with the
+ * pump block and the pump log already on, so a capture run needs no console and
+ * no ini edit. They are ordinary argument flags, mix-and-match, and each is
+ * independent of the others.
+ *
+ * WHY NOT ENV VARS: `-audio_pump`/`-audio_log` are console settings, not ini
+ * keys, and the only existing way to set them was GE_CONCMD (a console line at
+ * the first rendered frame). Flags are the same information, reachable before
+ * the first frame, and named after the console verbs so the two agree.
+ *
+ * The matching rules - dashes, separators, case, and why a bare word is not a
+ * flag - live in port/include/boot_flags.h with a test under ctest, because a
+ * flag that is silently ignored leaves no trace otherwise. */
+static PortBootFlags s_BootFlags;
+
+/* 1 when the flag was given, and the thing it asks for is not already true. */
+s32 videoBootClassicWanted(void)
+{
+    return s_BootFlags.n64_aa && s_CfgN64Aa == 0;
+}
+
+s32 videoBootAudioPump(void)
+{
+    return s_BootFlags.audio_pump;
+}
+
+s32 videoBootAudioLog(void)
+{
+    return s_BootFlags.audio_log;
+}
+
+/* Read the flags, and say what was understood. An argument that starts with '-' 
+ * and matched nothing is NAMED in the log: the whole point of a boot flag is
+ * that a run is self-documenting, and "-audio-pump=1" doing nothing silently is
+ * the failure this branch keeps finding. Not an error - the rest of this command
+ * line ignores unknown flags too. */
+void videoParseBootArgs(int argc, char **argv)
+{
+    int i;
+
+    portBootFlagsParse(argc, argv, &s_BootFlags);
+
+    for (i = 1; i < argc; i++)
+    {
+        const char *a = argv[i];
+
+        if (a != NULL && a[0] == '-' && a[1] == '\0')
+        {
+            continue; /* a lone "-" is a stdin convention, not a typo */
+        }
+        if (a != NULL && a[0] == '-' && !portBootFlagIs(a, "n64_aa")
+            && !portBootFlagIs(a, "audio_pump") && !portBootFlagIs(a, "audio_log")
+            && !portBootFlagIs(a, "rom-file") && !portBootFlagIs(a, "lang"))
+        {
+            portConLogf("ge: video: ignoring argument '%s' (not a boot flag)\n", a);
+        }
+    }
+}
+
+/* Apply the boot flags that must land BEFORE the renderer is created.
+ *
+ * -audio_pump / -audio_log are plain setters and safe anywhere.
+ *
+ * -n64_aa goes through portClassicToggle(), the same entry point as Tab, so a
+ * flag launch and a keypress cannot drift apart: it is Classic Mode, all of it
+ * (240p, maxfps=-1, MSAA, the pillars, the filter), not just the AA bit. The
+ * GUARD matters: portClassicSetLive(1) saves the current values into
+ * classic_saved before forcing its own, so calling it when Classic Mode is
+ * already on would overwrite the pre-classic snapshot with classic values and a
+ * later Tab-off would have nothing to restore. `!s_CfgN64Aa` makes it
+ * idempotent.
+ *
+ * Consequence, stated rather than discovered: this WRITES midas.ini, exactly as
+ * pressing Tab does, so the mode persists after the process exits. That is the
+ * behaviour a player asked for when they pressed the key; a launch that must
+ * leave the file alone sets GE_NOINISAVE (the parts still apply, in memory). */
+static void videoApplyBootArgs(void)
+{
+    extern void portClassicToggle(void);    /* port_options.c; weak absent headless */
+    extern void portAudioPumpStatsSet(s32 on);  /* audio_pc.c */
+    extern void portAudioPumpLogSet(s32 on);    /* audio_pc.c */
+
+    if (videoBootClassicWanted())
+    {
+        portClassicToggle();
+        portConLogf("ge: video: -n64_aa -> Classic Mode on (%s)\n",
+                    portVideoN64AaOn() ? "applied" : "did not apply");
+    }
+    if (s_BootFlags.audio_pump)
+    {
+        portAudioPumpStatsSet(1);
+        portConLogf("ge: video: -audio_pump -> the pump block is on\n");
+    }
+    if (s_BootFlags.audio_log)
+    {
+        portAudioPumpLogSet(1);
+        portConLogf("ge: video: -audio_log -> Data/Logs/audio_pump.log\n");
+    }
+}
+
 s32 videoInit(void)
 {
     struct GfxInitSettings set = {0}; /* zero the fields we don't set */
@@ -4836,6 +4946,11 @@ s32 videoInit(void)
     }
     videoLoadConfig(); /* midas.ini (needs no SDL init - scancode names are static) */
     videoIniWritableCheck();
+
+    /* The boot flags, after the ini (they read and override it) and before the
+     * renderer is created below - Classic Mode forces msaa, which has to be in
+     * place before gfx_init. */
+    videoApplyBootArgs();
 
     { /* GE_WINDOW=WxH: override midas.ini window size (automated capture runs
        * verify widescreen without editing the user's config) */

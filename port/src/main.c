@@ -857,6 +857,11 @@ int main(int argc, char **argv)
 #ifdef GE_VIDEO
     {
         extern s32 videoInit(void);
+        extern void videoParseBootArgs(int argc, char **argv);
+
+        /* -n64_aa / -audio_pump / -audio_log: read before init so videoInit can
+         * apply them ahead of the renderer (Classic Mode forces msaa). */
+        videoParseBootArgs(argc, argv);
         videoInit();
     }
 #endif
