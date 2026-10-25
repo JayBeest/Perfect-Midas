@@ -41,4 +41,8 @@ int  fakeWriteAt(int n, const char **out_key, int *out_val);   /* 0 past the end
 void fakeRefuse(const char *key);      /* make the setter refuse this key */
 void fakeAcceptInput(const char *key); /* make this [input] row settable */
 
+/* The preset's classic_n64aa part: 1 (the default) = turning Classic Mode on
+ * sets n64_aa, 0 = the preset leaves the bit alone. */
+void fakeClassicAaPart(int on);
+
 #endif /* PORT_OPTIONS_FAKE_H */

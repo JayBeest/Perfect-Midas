@@ -585,9 +585,11 @@ if(GE_PORT_TESTS)
     # ...and that the SETTER actually calls the rule. The audit's console defect
     # was a missing call at that seam, which no test of the rule can see. This
     # links the shipped port_options.c against a fake option table, so the real
-    # sOpts rows, portOptFind, optSet and portClassicSetLive all run.
-    add_executable(port_options_n64aa_test
-        port/tests/port_options_n64aa.c port/tests/port_options_fake.c
+    # sOpts rows, portOptFind, optSet and the classic adapters all run. Named for
+    # the PRESET's key since the Phase 3 split: n64_aa is the AA bit now, and the
+    # test's job is to prove changing it does NOT force the seven.
+    add_executable(port_options_classic_test
+        port/tests/port_options_classic.c port/tests/port_options_fake.c
         port/src/port_options.c port/src/classic_mode.c)
-    add_test(NAME port_options_n64aa COMMAND port_options_n64aa_test)
+    add_test(NAME port_options_classic COMMAND port_options_classic_test)
 endif()

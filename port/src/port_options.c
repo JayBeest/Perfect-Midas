@@ -196,10 +196,16 @@ static const struct PortOpt sOpts[] = {
     TOGGLE("high_lod",      "[display]", "High Detail\n",     PORTOPT_CAT_DISPLAY),
     ENUMR ("low_res",       "[display]", "3D Resolution\n",   PORTOPT_CAT_DISPLAY, sLowResVals, sLowResText, NULL),
     TOGGLE("mipmaps",       "[display]", "Mipmaps\n",         PORTOPT_CAT_DISPLAY),
-    /* Shown as "Classic Mode" in the menus (ini key n64_aa). The VIDEO sheet also applies the
-     * other classic settings (front.c portSheetClassicPreset), but on the
-     * console this sets the AA alone. */
-    TOGGLE("n64_aa",        "[display]", "Classic Mode\n",    PORTOPT_CAT_DISPLAY),
+    /* The Classic Mode PRESET, and the row every "is the mode on" question
+     * reads. Below it sit the settings it forces, which the menus lock while it
+     * is on; a row it does not own goes above it. */
+    TOGGLE("classic_mode",  "[display]", "Classic Mode\n",    PORTOPT_CAT_DISPLAY),
+    /* The VI AA bit alone: N64-style edge blending WITHOUT the 240p preset. Its
+     * own setting since the Phase 3 split - before this the key meant both, so
+     * "N64 edges without the preset" was not expressible. classic_n64aa (below)
+     * is the only row that couples them: whether the preset sets this bit when
+     * it turns on. */
+    TOGGLE("n64_aa",        "[display]", "N64 AA\n",          PORTOPT_CAT_DISPLAY),
     /* which parts Classic Mode applies (the CLASSIC sheet); video.c holds them.
      * The first seven follow sClassicKeys below. */
     TOGGLE("classic_res",      "[display]", "3D Resolution\n",  PORTOPT_CAT_DISPLAY),
@@ -360,6 +366,7 @@ static s32 optGet(const char *key, s32 *out)
 
 static void classicPartChanged(const char *key, s32 on);   /* "classic mode" below */
 static void classicApplyMode(s32 on);                     /* below */
+static void classicSyncAaBit(s32 on);                     /* below */
 /* the plan adapter, defined after the mode itself ("the rule, applied") */
 static void classicInputFill(ClassicInput *in, s32 parts[CLASSIC_MODE_MAX],
                             s32 classic[CLASSIC_MODE_MAX], s32 current[CLASSIC_MODE_MAX],
@@ -379,15 +386,19 @@ void portClassicSetHold(s32 on)
 
 /**
  * THE choke point: every table write passes here, so this is the one place that
- * has to know n64_aa carries a mode with it. Before this, four surfaces applied
- * the preset and three did not, each having learned it separately.
+ * has to know classic_mode carries a mode with it. Before this, four surfaces
+ * applied the preset and three did not, each having learned it separately.
+ *
+ * The key is `classic_mode`, and only that key: `n64_aa` is now the AA bit and
+ * must NOT force anything, or a player asking for N64 edges would get the whole
+ * preset - the conflation the split exists to end.
  *
  * Only on a REAL change: re-entering would remember the current values over
  * classic_saved and the player's originals would be gone.
  */
 static s32 optSet(const char *key, s32 v)
 {
-    const s32 transitions = (sClassicHold == 0) && (strcmp(key, "n64_aa") == 0);
+    const s32 transitions = (sClassicHold == 0) && (strcmp(key, "classic_mode") == 0);
     s32 was = 0;
 
     if (transitions)
@@ -399,6 +410,7 @@ static s32 optSet(const char *key, s32 v)
         classicPartChanged(key, v != 0);
         if (transitions && (v != 0) != (was != 0))
         {
+            classicSyncAaBit(v != 0);
             classicApplyMode(v != 0);
         }
         return 1;
@@ -1385,13 +1397,13 @@ void portOptCaptureDefaults(void)
 /** Puts every row back to its default, live, in one ini write. */
 void portOptResetDefaults(void)
 {
-    const s32 classic = portOptFind("n64_aa");
+    const s32 classic = portOptFind("classic_mode");
     s32 i;
 
-    /* Held: every row goes to its code default below, including n64_aa's, so the
-     * preset must not force its own values in the middle of that. Before the
-     * choke point existed this needed no flag - optSet did not transition - and
-     * the comment below explains the ordering it relied on instead. */
+    /* Held: every row goes to its code default below, including classic_mode's,
+     * so the preset must not force its own values in the middle of that. Before
+     * the choke point existed this needed no flag - optSet did not transition -
+     * and the comment below explains the ordering it relied on instead. */
     portClassicSetHold(1);
     /* Classic Mode first and raw, so its remembered values can't come back over
      * the defaults set below. */
@@ -1501,7 +1513,7 @@ static void classicPartChanged(const char *key, s32 on)
     s32 v[PORTCLASSIC_COUNT];
     s32 n = 0;
     s32 p, i;
-    s32 aa;
+    s32 mode;
 
     for (p = 0; p < PORTCLASSIC_COUNT; p++)
     {
@@ -1510,8 +1522,8 @@ static void classicPartChanged(const char *key, s32 on)
             break;
         }
     }
-    aa = portOptFind("n64_aa");
-    if (p >= PORTCLASSIC_COUNT || aa < 0 || portOptGet(aa) == 0
+    mode = portOptFind("classic_mode");
+    if (p >= PORTCLASSIC_COUNT || mode < 0 || portOptGet(mode) == 0
         || portVideoClassicSavedGet == NULL || portVideoClassicSavedSet == NULL)
     {
         return;
@@ -1541,7 +1553,7 @@ static void classicPartChanged(const char *key, s32 on)
  * older four-field classic_saved. They were the same rule written twice; now the
  * rule is portClassicPlan and this is only the adapter. Called by the choke point
  * in optSet, and by nothing else - a surface that wants the mode changes
- * n64_aa, and the choke point does the rest.
+ * classic_mode, and the choke point does the rest.
  */
 static void classicApplyMode(s32 on)
 {
@@ -1560,10 +1572,10 @@ static void classicApplyMode(s32 on)
 /**
  * The classic_toggle key (default Tab): flips classic mode in play.
  *
- * One set, and nothing else: optSet sees n64_aa change and applies the mode. The
- * explicit portClassicSetLive call that used to follow this is what made a
- * second entry point - and, once the choke point existed, a double apply that
- * would have re-snapshotted the player's values.
+ * One set, and nothing else: optSet sees classic_mode change and applies the
+ * mode (and the AA bit with it). The explicit portClassicSetLive call that used
+ * to follow this is what made a second entry point - and, once the choke point
+ * existed, a double apply that would have re-snapshotted the player's values.
  *
  * portClassicSetLive itself is gone for that reason. It was the public "apply
  * the mode" call that three surfaces each made for themselves; keeping it
@@ -1571,13 +1583,51 @@ static void classicApplyMode(s32 on)
  */
 void portClassicToggle(void)
 {
-    const s32 opt = portOptFind("n64_aa");
+    const s32 opt = portOptFind("classic_mode");
 
     if (opt < 0)
     {
         return;
     }
     portOptSetValue(opt, portOptGet(opt) == 0);
+}
+
+/* ---- the link between the two keys ---------------------------------------
+ *
+ * classic_mode (the preset) and n64_aa (the AA bit) are separate settings, and
+ * exactly ONE thing couples them: the preset's classic_n64aa part. This is the
+ * whole of that coupling, and it is deliberately one-directional.
+ *
+ *   preset on  -> the bit is set, if the part is on
+ *   preset off -> the bit is cleared, if the part is on
+ *   bit set    -> NOTHING happens to the preset
+ *
+ * The part gates BOTH directions, because it is one ownership claim: a preset
+ * that is not allowed to touch the bit must not set it on entry nor clear it on
+ * exit, or a player who wants N64 edges with the preset's other parts would
+ * lose the bit every time they left the mode. The consequence, stated rather
+ * than discovered: turning classic_n64aa OFF while the mode is on leaves the
+ * bit exactly as the player last set it, and leaving the mode then leaves it
+ * there too - the menu shows the bit, so it is not a hidden state.
+ *
+ * The other asymmetry is the point of the Phase 3 split: `n64_aa=1
+ * classic_mode=0` (N64 edges, no 240p, no forced values) is a state a player
+ * can ask for, and it would be unreachable if the bit carried the preset with
+ * it - which is exactly what the single key did before.
+ *
+ * Quiet, because the transition it belongs to saves once at the end: a second
+ * save here would rewrite midas.ini twice for one keypress.
+ */
+static void classicSyncAaBit(s32 on)
+{
+    extern s32 portClassicSetsN64Aa(void);   /* video.c; 1 headless (the fake) */
+    const s32 aa = portOptFind("n64_aa");
+
+    if (aa < 0 || !portClassicSetsN64Aa())
+    {
+        return;   /* no row, or the part is off: this preset does not own the bit */
+    }
+    portOptSetValueQuiet(aa, on ? 1 : 0);
 }
 
 /* ---- the rule, applied ---------------------------------------------------
@@ -1595,7 +1645,7 @@ static void classicInputFill(ClassicInput *in, s32 parts[CLASSIC_MODE_MAX],
                              s32 saved[CLASSIC_MODE_MAX])
 {
     extern s32  portVideoClassicSavedGet(s32 *v) __attribute__((weak));
-    const s32 aa = portOptFind("n64_aa");
+    const s32 mode = portOptFind("classic_mode");
     s32 i;
 
     for (i = 0; i < PORTCLASSIC_COUNT; i++)
@@ -1604,7 +1654,7 @@ static void classicInputFill(ClassicInput *in, s32 parts[CLASSIC_MODE_MAX],
         classic[i] = sClassicVals[i];
         current[i] = portOptGet(portOptFind(sClassicKeys[i]));
     }
-    in->mode_on = (aa >= 0) ? (portOptGet(aa) != 0) : 0;
+    in->mode_on = (mode >= 0) ? (portOptGet(mode) != 0) : 0;
     in->parts_on = parts;
     in->classic = classic;
     in->current = current;

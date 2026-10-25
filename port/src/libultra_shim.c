@@ -217,10 +217,17 @@ __attribute__((weak)) s32 portMouseBlocksAutoAim(s32 player)
     return 0;
 }
 
-/** Weak defaults: every Classic Mode part on headless, as with no ini; video.c overrides. */
+/** Weak default: every Classic Mode part on headless, as with no ini; video.c overrides. */
 __attribute__((weak)) s32 portClassicPart(s32 i)
 {
     (void) i;
+    return 1;
+}
+
+/** Weak default: the preset owns the AA bit headless, matching the part above; video.c
+ *  overrides. port_options.c's classicSyncAaBit is the only caller. */
+__attribute__((weak)) s32 portClassicSetsN64Aa(void)
+{
     return 1;
 }
 

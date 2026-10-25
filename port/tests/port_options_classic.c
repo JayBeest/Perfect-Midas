@@ -2,8 +2,9 @@
  * Classic Mode through the option table's seam.
  *
  * port/tests/classic_mode.c pins the RULE (what a transition writes). This file
- * pins the WIRING: that the shipped port_options.c applies the rule when n64_aa
- * changes, from every setter, exactly once, in the right order.
+ * pins the WIRING: that the shipped port_options.c applies the rule when
+ * classic_mode changes, from every setter, exactly once, in the right order -
+ * and that n64_aa does NOT.
  *
  * That seam is where the defects have been. The console bug was a missing call
  * (the rule was right the whole time), and the Phase 2 rewrite could reintroduce
@@ -13,6 +14,11 @@
  *
  * So most of these cases assert WORK, not values: how many saves, how many
  * snapshots, and in what order the writes landed. See port_options_fake.h.
+ *
+ * PHASE 3 (the n64_aa split) is what the last section is for. Until the keys
+ * were separated, "changing the bit does not force the seven" was not a state
+ * the program could be in, so it could not be asserted. It is now the assertion
+ * that holds the whole split together.
  *
  * WHAT THIS CANNOT TELL YOU
  *
@@ -50,7 +56,7 @@ static void expect_classic_forced(void)
 {
     int i;
 
-    CHECK(fakeGet("n64_aa") == 1);
+    CHECK(fakeGet("classic_mode") == 1);
     for (i = 0; i < NCLASSIC; i++) {
         CHECK(fakeGet(sClassicKeys[i]) == sClassic[i]);
     }
@@ -85,12 +91,19 @@ static void set_text(const char *key, const char *text)
 
 /* ---- the table itself -------------------------------------------------- */
 
-/* n64_aa is NOT the first row. An implementation that special-cased index 0
+/* Neither key is the first row. An implementation that special-cased index 0
  * would pass a fake whose tables started there and fail in the game. */
-static void n64_aa_is_not_row_zero(void)
+static void the_mode_keys_are_not_row_zero(void)
 {
+    CHECK(portOptFind("classic_mode") > 0);
+    CHECK(strcmp(portOptKey(portOptFind("classic_mode")), "classic_mode") == 0);
+
     CHECK(portOptFind("n64_aa") > 0);
     CHECK(strcmp(portOptKey(portOptFind("n64_aa")), "n64_aa") == 0);
+
+    /* One row each, and different rows: a table holding the same key twice
+     * would make portOptFind's answer depend on where the loop started. */
+    CHECK(portOptFind("classic_mode") != portOptFind("n64_aa"));
 }
 
 /* ---- entering, by text ------------------------------------------------- */
@@ -98,7 +111,7 @@ static void n64_aa_is_not_row_zero(void)
 static void text_on_forces_and_snapshots(void)
 {
     fakeReset();
-    set_text("n64_aa", "1");
+    set_text("classic_mode", "1");
 
     expect_classic_forced();
     expect_snapshot_is_mine();
@@ -115,13 +128,13 @@ static void all_true_spellings_transition(void)
 
     for (i = 0; i < 4; i++) {
         fakeReset();
-        set_text("n64_aa", yes[i]);
+        set_text("classic_mode", yes[i]);
         expect_classic_forced();
         expect_snapshot_is_mine();
 
         fakeClassicOn();
-        set_text("n64_aa", no[i]);
-        CHECK(fakeGet("n64_aa") == 0);
+        set_text("classic_mode", no[i]);
+        CHECK(fakeGet("classic_mode") == 0);
         expect_mine();
     }
 }
@@ -131,12 +144,12 @@ static void all_true_spellings_transition(void)
  * produced by the fix itself. */
 static void refused_set_does_not_transition(void)
 {
-    const s32 aa = portOptFind("n64_aa");
+    const s32 mode = portOptFind("classic_mode");
 
     fakeReset();
-    CHECK(portOptSetIni(aa, "2") == 0);      /* a TOGGLE takes only on/off */
+    CHECK(portOptSetIni(mode, "2") == 0);    /* a TOGGLE takes only on/off */
 
-    CHECK(fakeGet("n64_aa") == 0);
+    CHECK(fakeGet("classic_mode") == 0);
     expect_mine();
     CHECK(fakeSnapshotCalls() == 0);
 }
@@ -147,14 +160,14 @@ static void refused_set_does_not_transition(void)
  * half-state, produced by the fix itself. */
 static void failed_setter_does_not_transition(void)
 {
-    const s32 aa = portOptFind("n64_aa");
+    const s32 mode = portOptFind("classic_mode");
 
     fakeReset();
-    fakeRefuse("n64_aa");
+    fakeRefuse("classic_mode");
 
-    CHECK(portOptSetValue(aa, 1) == 0);   /* the refusal is reported */
-    CHECK(fakeGet("n64_aa") == 0);        /* and the flag did not move */
-    expect_mine();                        /* nor did anything else */
+    CHECK(portOptSetValue(mode, 1) == 0);   /* the refusal is reported */
+    CHECK(fakeGet("classic_mode") == 0);    /* and the flag did not move */
+    expect_mine();                          /* nor did anything else */
     CHECK(fakeSnapshotCalls() == 0);
 }
 
@@ -167,12 +180,12 @@ static void one_transition_is_one_save(void)
 {
     fakeReset();
     fakeIniCallsReset();
-    set_text("n64_aa", "1");
+    set_text("classic_mode", "1");
     CHECK(fakeIniCalls() == 2);
 
     fakeClassicOn();
     fakeIniCallsReset();
-    set_text("n64_aa", "0");
+    set_text("classic_mode", "0");
     CHECK(fakeIniCalls() == 2);
 }
 
@@ -182,7 +195,7 @@ static void one_transition_is_one_save(void)
 static void one_transition_is_one_snapshot(void)
 {
     fakeReset();
-    set_text("n64_aa", "1");
+    set_text("classic_mode", "1");
     CHECK(fakeSnapshotCalls() == 1);
 
     /* And the snapshot it took is the player's, not the mode's. This is the
@@ -195,10 +208,10 @@ static void one_transition_is_one_snapshot(void)
 static void repeated_on_is_not_a_transition(void)
 {
     fakeReset();
-    set_text("n64_aa", "1");
+    set_text("classic_mode", "1");
     CHECK(fakeSnapshotCalls() == 1);
 
-    set_text("n64_aa", "1");
+    set_text("classic_mode", "1");
     CHECK(fakeSnapshotCalls() == 1);         /* still one */
     expect_classic_forced();
     expect_snapshot_is_mine();
@@ -215,11 +228,11 @@ static void flag_is_written_before_the_values(void)
     int val = 0;
 
     fakeReset();
-    set_text("n64_aa", "1");
+    set_text("classic_mode", "1");
 
     CHECK(fakeWriteCount() >= 1 + NCLASSIC);
     CHECK(fakeWriteAt(0, &key, &val) == 1);
-    CHECK(strcmp(key, "n64_aa") == 0);
+    CHECK(strcmp(key, "classic_mode") == 0);
     CHECK(val == 1);
 }
 
@@ -233,7 +246,7 @@ static void nothing_is_saved_before_the_values_land(void)
     int i;
 
     fakeReset();
-    set_text("n64_aa", "1");
+    set_text("classic_mode", "1");
 
     for (i = 0; i < fakeWriteCount(); i++) {
         CHECK(fakeWriteAt(i, &key, NULL) == 1);
@@ -257,13 +270,13 @@ static void toggle_applies_once(void)
     fakeReset();
     portClassicToggle();
 
-    CHECK(fakeGet("n64_aa") == 1);
+    CHECK(fakeGet("classic_mode") == 1);
     expect_classic_forced();
     CHECK(fakeSnapshotCalls() == 1);
     expect_snapshot_is_mine();
 
     portClassicToggle();
-    CHECK(fakeGet("n64_aa") == 0);
+    CHECK(fakeGet("classic_mode") == 0);
     expect_mine();
 }
 
@@ -273,6 +286,21 @@ static void other_keys_do_not_transition(void)
     set_text("hud_scale", "0");
 
     CHECK(fakeGet("hud_scale") == 0);
+    CHECK(fakeSnapshotCalls() == 0);
+    expect_mine();
+}
+
+/* A PART row is not the preset, even though its name starts with classic_.
+ * Setting one while the mode is on forces or restores that single setting via
+ * classicPartChanged; it must not run a whole transition, which would
+ * re-snapshot the player's values and overwrite the ones the mode saved. */
+static void part_rows_do_not_transition(void)
+{
+    fakeReset();
+    set_text("classic_pillars", "1");
+
+    CHECK(fakeGet("classic_pillars") == 1);
+    CHECK(fakeGet("classic_mode") == 0);
     CHECK(fakeSnapshotCalls() == 0);
     expect_mine();
 }
@@ -295,17 +323,107 @@ static void the_hold_suppresses_the_transition(void)
 {
     fakeReset();
     portClassicSetHold(1);
-    set_text("n64_aa", "1");
+    set_text("classic_mode", "1");
 
-    CHECK(fakeGet("n64_aa") == 1);
+    CHECK(fakeGet("classic_mode") == 1);
     expect_mine();                       /* the sheet lands its own values */
     CHECK(fakeSnapshotCalls() == 0);
 
     portClassicSetHold(0);
 
     fakeReset();                         /* a leaked hold would disable the mode */
-    set_text("n64_aa", "1");
+    set_text("classic_mode", "1");
     expect_classic_forced();
+}
+
+/* ---- the split: two keys, one direction (plan.md Phase 3) --------------- */
+
+/* THE acceptance assertion of the whole phase. Asking for N64 edges used to
+ * turn on the preset as a side effect, because the two were one key. If this
+ * ever fails, the split has been undone and a player can no longer have the bit
+ * without the 240p, the forced values and the pillars. */
+static void the_bit_does_not_run_the_preset(void)
+{
+    fakeReset();
+    set_text("n64_aa", "1");
+
+    CHECK(fakeGet("n64_aa") == 1);         /* the bit is on... */
+    CHECK(fakeGet("classic_mode") == 0);   /* ...and the preset is not */
+    expect_mine();                         /* nothing was forced */
+    CHECK(fakeSnapshotCalls() == 0);       /* and nothing was remembered */
+    CHECK(fakeIniCalls() > 0);             /* still persisted, though */
+}
+
+/* The other direction: the preset moves, and the bit follows it, because its
+ * classic_n64aa part is the one thing that couples them. Without this the split
+ * would silently drop N64 edges for every Classic Mode player. */
+static void the_preset_moves_the_bit(void)
+{
+    fakeReset();
+    set_text("classic_mode", "1");
+    CHECK(fakeGet("n64_aa") == 1);
+
+    fakeClassicOn();
+    set_text("classic_mode", "0");
+    CHECK(fakeGet("n64_aa") == 0);
+}
+
+/* ...but only because the part says so. A player who turned classic_n64aa off
+ * has said the preset must not own the bit; the bit they chose survives. */
+static void the_part_off_leaves_the_bit_alone(void)
+{
+    fakeReset();
+    fakeClassicAaPart(0);
+    set_text("n64_aa", "1");
+
+    set_text("classic_mode", "1");         /* the preset comes on */
+    expect_classic_forced();
+    CHECK(fakeGet("n64_aa") == 1);         /* untouched by the preset */
+
+    set_text("classic_mode", "0");         /* and off again */
+    expect_mine();
+    CHECK(fakeGet("n64_aa") == 1);         /* still the player's choice */
+}
+
+/* The two keys are independent settings, so preset-on with the bit off must
+ * survive a same-value set of the preset: nothing re-derives one from the other
+ * behind the player's back. (The menus can express it - the VIDEO sheet's two
+ * rows - and videoApplyAa reads the bit alone.) */
+static void the_preset_stays_on_with_the_bit_off(void)
+{
+    fakeClassicOn();
+    fakeSet("n64_aa", 0);                  /* N64 edges off, preset on */
+
+    set_text("classic_mode", "1");         /* a same-value set: no transition */
+    CHECK(fakeGet("classic_mode") == 1);
+    CHECK(fakeGet("n64_aa") == 0);
+    CHECK(fakeSnapshotCalls() == 0);
+}
+
+/* The mismatch report counts the seven. The bit is NOT one of them: it is not in
+ * classic_saved, and preset-on with the bit off is a legitimate state, not
+ * drift. A repair must therefore leave the player's bit alone. */
+static void the_bit_is_not_a_mismatch(void)
+{
+    s32 idx[8];
+
+    fakeClassicOn();
+    fakeSet("n64_aa", 0);
+
+    /* the bit alone is not drift... */
+    CHECK(portClassicMismatchParts(idx, 8) == 0);
+    CHECK(portClassicRepair() == 0);
+    CHECK(fakeGet("n64_aa") == 0);
+
+    /* ...but the report still asks the PRESET whether the mode is on: a drifted
+     * value must be named even though the bit is off. Reading the bit here would
+     * call a preset-on mode "off" and report real drift as consistent - the
+     * whole reason mode_on moved to classic_mode. */
+    fakeSet("low_res", 720);
+    CHECK(portClassicMismatchParts(idx, 8) == 1);
+    CHECK(idx[0] == 0);
+    CHECK(portClassicRepair() == 1);
+    CHECK(fakeGet("n64_aa") == 0);         /* and the repair left the bit alone */
 }
 
 /* ---- the repair and report path (plan.md Phase 0) ---------------------- */
@@ -364,7 +482,7 @@ static void mismatch_is_zero_when_consistent_or_off(void)
 
 int main(void)
 {
-    n64_aa_is_not_row_zero();
+    the_mode_keys_are_not_row_zero();
 
     text_on_forces_and_snapshots();
     all_true_spellings_transition();
@@ -380,14 +498,21 @@ int main(void)
 
     toggle_applies_once();
     other_keys_do_not_transition();
+    part_rows_do_not_transition();
     input_rows_still_set();
 
     the_hold_suppresses_the_transition();
+
+    the_bit_does_not_run_the_preset();
+    the_preset_moves_the_bit();
+    the_part_off_leaves_the_bit_alone();
+    the_preset_stays_on_with_the_bit_off();
+    the_bit_is_not_a_mismatch();
 
     repair_forces_and_remembers_nothing();
     mismatch_respects_the_caller_buffer();
     mismatch_is_zero_when_consistent_or_off();
 
-    printf("port_options_n64aa: all checks passed\n");
+    printf("port_options_classic: all checks passed\n");
     return 0;
 }

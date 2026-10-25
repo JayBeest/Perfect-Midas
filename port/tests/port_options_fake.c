@@ -18,11 +18,15 @@
 #define MAXLOG  64
 #define MAXSAVED 8
 
-/* The keys a test can touch. Deliberately NOT ordered to put n64_aa first: a
- * test that depended on position would pass here and be wrong in the game. */
+/* The keys a test can touch. Deliberately NOT ordered to put classic_mode or
+ * n64_aa first: a test that depended on position would pass here and be wrong
+ * in the game. Both keys are present, and in the order the table has them -
+ * but nothing here asserts their distance. */
 static const char *const sKeys[MAXKEYS] = {
     "low_res", "filtering", "anisotropy", "maxfps", "msaa", "mipmaps", "filter_2d",
+    "classic_mode",
     "n64_aa",
+    "classic_pillars",         /* a PART row: a classic_* key that is not the preset */
     "hud_scale",
     "no_aim_crouch",          /* an [input] row, refused unless accepted */
     NULL
@@ -36,6 +40,7 @@ static const int sMine[7] = { 480, 1, 2, 60, 4, 0, 0 };
 static int sVal[MAXKEYS];
 static int sRefused[MAXKEYS];
 static int sInputOK[MAXKEYS];
+static int sAaPart = 1;   /* the classic_n64aa part: 1 = the preset sets the bit */
 static int sSaved[MAXSAVED];
 static int sSavedN;
 static int sSnapshotCalls;
@@ -94,7 +99,9 @@ void fakeResetPlayerValues(void)
     sVal[fakeIndex("mipmaps")] = sMine[5];
     sVal[fakeIndex("filter_2d")] = sMine[6];
     sVal[fakeIndex("n64_aa")] = 0;
+    sVal[fakeIndex("classic_mode")] = 0;
     sVal[fakeIndex("hud_scale")] = 1;
+    sAaPart = 1;
 }
 
 void fakeReset(void)
@@ -107,6 +114,9 @@ void fakeClassicOn(void)
     int i;
 
     fakeResetPlayerValues();
+    /* BOTH keys, as the preset leaves them: classic_mode is what forces the
+     * seven, n64_aa is the bit its classic_n64aa part turned on. */
+    sVal[fakeIndex("classic_mode")] = 1;
     sVal[fakeIndex("n64_aa")] = 1;
     sVal[fakeIndex("low_res")] = sClassic[0];
     sVal[fakeIndex("filtering")] = sClassic[1];
@@ -184,10 +194,11 @@ s32 portVideoOptionGet(const char *key, s32 *out)
 {
     const int i = fakeIndex(key);
 
-    /* n64_aa and the [input] row are routed by their own bridges below, exactly
-     * as video.c leaves them to input_pc.c. Keeping the split faithful matters:
-     * a fake that answered everything from one table would hide a key that the
-     * real build routes to a different owner. */
+    /* The [input] row is routed by its own bridge below, exactly as video.c
+     * leaves it to input_pc.c. Keeping the split faithful matters: a fake that
+     * answered everything from one table would hide a key that the real build
+     * routes to a different owner. Both [display] keys are answered here, as
+     * video.c answers them. */
     if (i < 0 || i == fakeIndex("no_aim_crouch")) {
         return 0;
     }
@@ -247,7 +258,19 @@ s32 portJoyPortOptionSet(const char *key, s32 value)
 
 s32 portClassicPart(s32 i)
 {
-    return (i >= 0 && i < 8) ? 1 : 0;   /* every part enabled: Classic Mode as shipped */
+    return (i >= 0 && i < 11) ? 1 : 0;   /* every part enabled: Classic Mode as shipped */
+}
+
+/* video.c's portClassicSetsN64Aa: the same "every part on" world, so the preset
+ * owns the AA bit. fakeClassicAaPart(0) is the player who turned the part off. */
+s32 portClassicSetsN64Aa(void)
+{
+    return sAaPart;
+}
+
+void fakeClassicAaPart(int on)
+{
+    sAaPart = on ? 1 : 0;
 }
 
 /* Mirrors video.c's portVideoClassicSavedSet: it always stores CLASSIC_SAVED_MAX

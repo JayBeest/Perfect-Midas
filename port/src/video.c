@@ -1013,6 +1013,15 @@ static int videoClassicViOn(void)
     return s_CfgN64Aa && portClassicPart(CLASSIC_PART_N64AA);
 }
 
+/** 1 = the PRESET owns the AA bit: its classic_n64aa part is on, so turning
+ *  Classic Mode on sets [display] n64_aa and turning it off clears it.
+ *  port_options.c's classicSyncAaBit is the only caller, and this part is the
+ *  only link between the two keys - the bit itself never touches the preset. */
+s32 portClassicSetsN64Aa(void)
+{
+    return portClassicPart(CLASSIC_PART_N64AA);
+}
+
 /** 1 while Classic Mode is on ([display] n64_aa, the classic_toggle key's state).
  *  Read by the -n64_aa boot flag, which reports whether its apply took. */
 s32 portVideoN64AaOn(void)

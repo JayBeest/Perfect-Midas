@@ -23,7 +23,7 @@ CC_BASE="-std=c99 -I$ROOT/include -I$ROOT/port/include"
 CM="$ROOT/port/src/classic_mode.c"
 PO="$ROOT/port/src/port_options.c"
 TS="$ROOT/port/tests/classic_mode.c"
-TP="$ROOT/port/tests/port_options_n64aa.c"
+TP="$ROOT/port/tests/port_options_classic.c"
 TF="$ROOT/port/tests/port_options_fake.c"
 
 status=0
@@ -182,8 +182,32 @@ run_cs "classic_split" survive
 echo
 echo "the seam (port/src/port_options.c)"
 MUT_SRC="$PO"
-mutate "$PO" 's/strcmp\(key, "n64_aa"\) == 0/strncmp(key, "classic_", 8) == 0/' "choke: wrong key test" && \
-    check "choke point matches classic_* not n64_aa" kill
+# The choke point's key. After the Phase 3 split the preset IS classic_mode, so
+# matching classic_* is now a SUPERSET of the real key rather than a different
+# one, and proves nothing about the WRONG key. The wrong key that matters is the
+# bit: a choke point firing on n64_aa is exactly the conflation the split exists
+# to end - it would force the seven for anyone asking for N64 edges.
+mutate "$PO" 's/strcmp\(key, "classic_mode"\) == 0/strcmp(key, "n64_aa") == 0/' "choke: wrong key test" && \
+    check "choke point fires on the AA bit" kill
+# ...and the wide version, a different bug: too MANY keys, not the wrong one. It
+# fires on classic_n64aa and the other part rows too - the mutant that used to
+# name this line, kept because the superset is still a bug.
+mutate "$PO" 's/strcmp\(key, "classic_mode"\) == 0/strncmp(key, "classic_", 8) == 0/' "choke: key too wide" && \
+    check "choke point fires on every classic_* row" kill
+# The bit must not carry the preset. This is the mutant that undoes the whole
+# split while leaving both keys in place: n64_aa is still its own key and still
+# holds the bit, but setting it forces the seven as well.
+mutate "$PO" 's/strcmp\(key, "classic_mode"\) == 0/(strcmp(key, "classic_mode") == 0 || strcmp(key, "n64_aa") == 0)/' "choke: the bit carries the preset" && \
+    check "setting n64_aa forces the seven" kill
+# ...and the link itself, in both directions of failure. Without it the preset
+# turns on with the bit off, and every Classic Mode player silently loses the
+# N64 edges on upgrade.
+mutate "$PO" 's/    classicSyncAaBit\(v != 0\);/    (void) 0;/' "link: never move the bit" && \
+    check "the preset leaves the AA bit behind" kill
+# The read it makes its decision from, at the seam rather than in video.c: a
+# mode_on taken from the bit reports a preset-on mode as off.
+mutate "$PO" 's/    in->mode_on = \(mode >= 0\) \? \(portOptGet\(mode\) != 0\) : 0;/    in->mode_on = (portOptFind("n64_aa") >= 0) ? (portOptGet(portOptFind("n64_aa")) != 0) : 0;/' "mode_on: read the bit" && \
+    check "is-the-mode-on reads the AA bit" kill
 mutate "$PO" 's/\(v != 0\) != \(was != 0\)\)/1)/' "choke: always transition" && \
     check "choke point transitions on a same-value set" kill
 mutate "$PO" 's/const s32 transitions = \(sClassicHold == 0\) && /const s32 transitions = /' "choke: ignore the hold" && \
@@ -212,7 +236,7 @@ if cmp -s "$CM" "$CM"; then
         printf '  BROKEN   the unmutated rule test fails\n'; status=1; }
 fi
 cc $CC_BASE "$TP" "$TF" "$PO" "$CM" -o "$W/b2" 2>/dev/null && "$W/b2" >/dev/null 2>&1 && \
-    printf '  ok       %-50s passes unmutated\n' "port_options_n64aa" || {
+    printf '  ok       %-50s passes unmutated\n' "port_options_classic" || {
     printf '  BROKEN   the unmutated seam test fails\n'; status=1; }
 cc $CC_BASE "$TCS" "$CS" -o "$W/b3" 2>/dev/null && "$W/b3" >/dev/null 2>&1 && \
     printf '  ok       %-50s passes unmutated\n' "classic_split" || {
