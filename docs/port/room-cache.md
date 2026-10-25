@@ -164,7 +164,7 @@ of date. Not resolved here.
 (`-n64_aa` is spelled `-classic` now and the old name is kept as an alias, so
 every command in this section still works as written. It sets the Classic Mode
 preset — `[display] classic_mode` — and no longer the AA bit it is named after;
-see `plan.md` §5.)
+see "Two keys, not one" in `SETTINGS.md`.)
 
 The run then had hardware pacing's fill model pricing frames against a cache
 that had just been switched on, and nothing said so. Executed before the fix:

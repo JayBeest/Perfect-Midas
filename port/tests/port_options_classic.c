@@ -337,7 +337,7 @@ static void the_hold_suppresses_the_transition(void)
     expect_classic_forced();
 }
 
-/* ---- the split: two keys, one direction (plan.md Phase 3) --------------- */
+/* ---- the split: two keys, one direction --------------------------------- */
 
 /* THE acceptance assertion of the whole phase. Asking for N64 edges used to
  * turn on the preset as a side effect, because the two were one key. If this
@@ -538,7 +538,7 @@ static void the_hold_suppresses_the_demotion(void)
     portClassicSetHold(0);
 }
 
-/* ---- the repair and report path (plan.md Phase 0) ---------------------- */
+/* ---- the repair and report path ---------------------------------------- */
 
 /* The half-state the audit found: mode on, one setting drifted. Reporting it
  * must name it, and repairing it must force it WITHOUT touching the snapshot -
