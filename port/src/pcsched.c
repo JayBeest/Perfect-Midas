@@ -1009,8 +1009,10 @@ pace_done:
     }
 
     { /* AUDIO PHASE 1b: the N64 audio thread never runs on PC; one pump
-       * per retrace drives the real synthesizer and feeds SDL (audio_pc.c
-       * no-ops until alInit has run and a player is registered). */
+       * per message-queue pass drives the real synthesizer and feeds SDL
+       * (audio_pc.c no-ops until alInit has run and a player is registered).
+       * The pass is what delivers the retrace the main loop is waiting for, so
+       * the pump call rate and the loop's spin rate are the same number. */
         extern void portAudioPump(void);
 
 #ifdef _WIN32

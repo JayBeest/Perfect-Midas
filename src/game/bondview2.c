@@ -12668,12 +12668,14 @@ Gfx *bondviewRenderCredits(Gfx *gdl)
 
 /* console cl_audio_pump: the live pump state, at the top-left corner where the
  * FPS strip draws. Reads the pump's snapshot (audio_pc.c, port_audio_stats.h);
- * FPS and TPS come from the frame timing code, so this agrees with the strip it
- * displaces. */
+ * the four frame/tick numbers on the first row come from the frame timing code
+ * (frametiming.c), so this agrees with the strip it displaces. */
 static Gfx *portDrawAudioPumpStats(Gfx *gdl, s32 x, s32 y)
 {
     extern s32 g_PortStatFps;                      /* frametiming.c */
-    extern s32 g_PortStatTps;
+    extern s32 g_PortStatTicks;                    /* the honest tick rate */
+    extern s32 g_PortStatFieldsX10;                /* fields/s x10 */
+    extern s32 g_PortStatFieldsPerTickX100;        /* fields per tick x100 */
     struct PortAudioPumpStats st;
     char line[6][48];
     s32 rows = 0;
@@ -12689,12 +12691,39 @@ static Gfx *portDrawAudioPumpStats(Gfx *gdl, s32 x, s32 y)
      * Rates are per second. SND is milliseconds of audio, the only unit in
      * which "are we keeping up" is judgeable at a glance. DRY/OVER/SKIP/FRC
      * are counts of events in the window and stay dimensionless. */
-    sprintf(line[rows++], "FPS %dfps TPS %dtps",
-            (int) g_PortStatFps, (int) g_PortStatTps);
+    /* Row 1: the health quadruple, and the only row whose numbers can say
+     * whether SIMULATED TIME is keeping up.
+     *
+     *   fps  presented frames per second
+     *   tk   sim ticks per second, from g_PortTickSerial (advances once per
+     *        lvlTick call, so sub-ticks and paused ticks count). NOT
+     *        g_PortTicksAdmitted: that one increments before boss.c's pendingGfx
+     *        backpressure guard and so counts ticks that never stepped.
+     *   f/s  60Hz fields credited to the sim per second, x1 with one decimal.
+     *        THE invariant: 60.0 means game speed is right, at any tick rate
+     *        and any frame rate. Below 60.0 the sim is losing wall-clock time.
+     *   f/t  fields absorbed per admitted tick. 1.00 at 60 fps; above 1.00 a
+     *        frame overran a field and the tick absorbed the difference (the
+     *        console's own behaviour, which tickhz=hw reproduces); below 1.00
+     *        a raised tick rate is sub-ticking one field.
+     *
+     * The old row read "FPS %dfps TPS %dtps" and TPS was not the tick rate: it
+     * is min(tick rate, 60), because lv.c increments g_GlobalTickCount once per
+     * clock-advancing tick whatever the tick absorbed. It read 60 at tickhz=120
+     * and it tracked FPS below 60, which is exactly the reading that looked like
+     * a bug in the hw-mode capture. f/s and f/t replace it here; TPS survives in
+     * the log and the title bar for continuity. See
+     * docs/port/tick-and-field-accounting.md. */
+    sprintf(line[rows++], "%dfps %dtk %d.%df/s %d.%02df/t",
+            (int) g_PortStatFps, (int) g_PortStatTicks,
+            (int) (g_PortStatFieldsX10 / 10), (int) (g_PortStatFieldsX10 % 10),
+            (int) (g_PortStatFieldsPerTickX100 / 100),
+            (int) (g_PortStatFieldsPerTickX100 % 100));
     {
         /* PMP is every pump call; RND is the subset that produced audio.
-         * portAudioPump runs every scheduler iteration, so PMP dwarfs RND and
-         * says nothing about sound on its own - the pair is the point. */
+         * The pump runs once per message-queue pass, and those passes are far
+         * more frequent than drawn frames, so PMP dwarfs RND and says nothing
+         * about sound on its own - the pair is the point. */
         u32 pps = (st.valid && st.window_ms != 0)
                 ? (u32) (((unsigned long long) st.pumps * 1000u) / st.window_ms) : 0;
         u32 rps = (st.valid && st.window_ms != 0)
@@ -12783,14 +12812,13 @@ static Gfx *portDrawFpsCounter(Gfx *gdl)
        * frames per second, drawn in-window for fullscreen use, from gfx_sdl2's
        * 500ms stat window via g_PortStatFps (0 headless).
        *
-       * SUPPRESSED when the pump block is on: the block carries FPS and TPS
-       * itself, so leaving the digits up would print the same two numbers
-       * twice, one above the other. */
+       * SUPPRESSED when the pump block is on: the block carries the frame rate
+       * itself, so leaving the digits up would print the same number twice. */
         if (portVideoShowFps() && !portAudioPumpStatsShown() && corner_ok)
         {
             /* Just the number, in the small Gothic font, two units in from the
              * view's top-left so it stays above the top text box; always
-             * anchored to the window's left (TPS is in the log's stats line). */
+             * anchored to the window's left. */
             static char fpstext[16];
             s32 fp_x = ox;
             s32 fp_y = oy;

@@ -257,7 +257,7 @@ static int s_CfgTrueEnemyRockets = 1; /* 0 = restore the vanilla Enemy Rockets
                                        * the guard with their original
                                        * weapon right after giving them the
                                        * rocket launcher) */
-static int s_CfgShowFps = 0;          /* 1 = in-game FPS/TPS overlay strip */
+static int s_CfgShowFps = 0;          /* 1 = in-game FPS digits */
 /* what midas.ini literally contained, so the derived value can be written back
  * only when the file disagrees */
 static int s_CfgTickSeenInIni = 0;
@@ -599,7 +599,7 @@ s32 portTrueEnemyRocketsEnabled(void)
     return s_CfgTrueEnemyRockets;
 }
 
-/** midas.ini [display] show_fps: the bondview FPS/TPS overlay reads this.
+/** midas.ini [display] show_fps: the bondview FPS digits read this.
  * GE_SHOWFPS env overrides either way (headless A/B, capture runs). */
 s32 portVideoShowFps(void)
 {

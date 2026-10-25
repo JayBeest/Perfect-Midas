@@ -1084,7 +1084,18 @@ static s32 portAudioLogOpen(void)
             "# Project Midas audio pump log (console: cl_audio_log 1)\n"
             "# One line per second. Fields:\n"
             "#   t      ms since logging started\n"
-            "#   FPS/TPS rendered frames and simulation ticks per second\n"
+            "#   FPS    presented frames per second\n"
+            "#   TPS    ticks per second that advanced the game clock by a field.\n"
+            "#          NOT the tick rate: lv.c increments g_GlobalTickCount once\n"
+            "#          per clock-advancing tick however many fields it absorbed,\n"
+            "#          so this is min(tick rate, 60) and it tracks FPS below 60.\n"
+            "#   tk     admitted sim ticks per second - the real tick rate (120 at\n"
+            "#          tickhz=120 where TPS reads 60)\n"
+            "#   f/s    60Hz fields credited to the sim per second. 60.0 means\n"
+            "#          simulated time is keeping up. Below 60.0 the sim is losing\n"
+            "#          wall-clock time (a truncated stall, GE_TICKMAXSTEP).\n"
+            "#   f/t    fields absorbed per admitted tick: 1.00 at 60fps, above 1.00\n"
+            "#          when a frame overran a field (the console's own pacing).\n"
             "#   pmp/s  pump calls per second (the pump runs every scheduler\n"
             "#          iteration, so this is much larger than the frame rate)\n"
             "#   rnd/s  of those calls, the ones that rendered any samples\n"
@@ -1179,18 +1190,26 @@ static void portAudioLogLine(u32 now)
                     / ((unsigned long long) st->rate * 4u));
 
     {
-        extern s32 g_PortStatFps; /* frametiming.c, the same pair the strip uses */
+        extern s32 g_PortStatFps; /* frametiming.c, the same numbers the strip uses */
         extern s32 g_PortStatTps;
+        extern s32 g_PortStatTicks;
+        extern s32 g_PortStatFieldsX10;
+        extern s32 g_PortStatFieldsPerTickX100;
 
         /* Both units on purpose. The screen shows one each, because a glance
          * needs one answer; this file is read by someone chasing a defect, so it
          * carries the exact sample counts as well. */
         fprintf(s_LogFile,
-                "t=%ums FPS %d TPS %d pmp %u/s rnd %u/s"
+                "t=%ums FPS %d TPS %d tk %d f/s %d.%d f/t %d.%02d "
+                "pmp %u/s rnd %u/s"
                 " que %u/%uB %u/%ums cap %uB"
                 " snd %u/%usmp %u/%ums"
                 " dry %u over %u skip %u frc %u stall %d clk %dms dev %uHz\n",
                 now - s_LogStart, (int) g_PortStatFps, (int) g_PortStatTps,
+                (int) g_PortStatTicks,
+                (int) (g_PortStatFieldsX10 / 10), (int) (g_PortStatFieldsX10 % 10),
+                (int) (g_PortStatFieldsPerTickX100 / 100),
+                (int) (g_PortStatFieldsPerTickX100 % 100),
                 pps, rps,
                 st->queue, st->target, que_ms, target_ms, st->cap,
                 st->rendered, st->needed, snd_ms, need_ms,

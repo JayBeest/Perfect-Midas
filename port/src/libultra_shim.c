@@ -176,7 +176,7 @@ __attribute__((weak)) s32 portHighLod(void)
     return 0;
 }
 
-/** Weak default: no FPS/TPS overlay headless; video.c overrides. */
+/** Weak default: no FPS digits headless; video.c overrides. */
 __attribute__((weak)) s32 portVideoShowFps(void)
 {
     return 0;
