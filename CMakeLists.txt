@@ -562,4 +562,11 @@ if(GE_PORT_TESTS)
     # a player reads in the corner are checked without a window, a GPU or a ROM.
     add_executable(tick_stats_test port/tests/tick_stats.c port/src/tick_stats.c)
     add_test(NAME tick_stats COMMAND tick_stats_test)
+
+    # Classic Mode's forced values: what the preset remembers and forces, as a
+    # pure rule. Written from the four half-states docs/port/settings-and-save-
+    # audit.md found, so a rewrite that keeps them fails here. Registered
+    # explicitly - there is no glob in this block.
+    add_executable(classic_mode_test port/tests/classic_mode.c port/src/classic_mode.c)
+    add_test(NAME classic_mode COMMAND classic_mode_test)
 endif()
