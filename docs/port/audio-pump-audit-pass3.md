@@ -179,10 +179,14 @@ hardware pacing — the hitch lines carry `model held N`, which only prints when
 71:tickhz=120
 ```
 
-`videoPersistDerivedTick` (`port/src/video.c:929-932`) returns early when
-`s_CfgTickHz == -1`, so the `hw` form is never written by this path. The user's
+`videoPersistDerivedTick` (`port/src/video.c`) used to return early when
+`s_CfgTickHz == -1`, so the `hw` form was never written by this path. **That
+early return is gone** (F3-A); the function now writes `hw` through
+`portTickIniValue`, and the resolution is recorded in
+`docs/port/tick-and-field-accounting.md` §11.3 and in
+`audio-pump-state-of-play.md` §2. The user's
 own file is the same shape (`maxfps=-1`, `tickhz=0`), which is precisely the
-state `docs/port/tick-and-field-accounting.md` §11.3 already records as live:
+state §11.3 records as live:
 
 > `So a player who leaves the menu reporting "uncapped" exits with a file that
 > resolves back to hw pacing … The writer should never emit a pair the loader
@@ -309,8 +313,11 @@ about.
   arithmetic; the race the fix exists for was not observed. The design record
   says the same.
 - **`docs/port/n64-hw-pacing.md` and `docs/port/tick-rate-binding.md`.** Cited by
-  `frametiming.c` and `video.c:844`; both still absent. Recorded as an open
-  question by the branch itself; I confirm they do not exist.
+  `frametiming.c` (the hw model and its load rates) and by `video.c`
+  (`videoCoupleTickToMaxFps`'s comment). Both were absent at the time of this
+  audit and are resolved now: `n64-hw-pacing.md` exists, and the tick-rate
+  binding was folded into `tick-and-field-accounting.md` §13 rather than given a
+  second overlapping document.
 - **Windows/Linux behaviour.** macOS only, as the handoff anticipated.
 
 ---
@@ -478,9 +485,9 @@ Measured in the same hw-pacing Dam configuration as `run7`:
 The before/after is the point: the same windows that read `8 fld model held 4`
 — healthy by the old rule — now read `credit 8 of 53`.
 
-**What is still open.** The unverified items in §2, and the two design
-documents that are cited but do not exist. D5 is no longer among them — see
-below.
+**What is still open.** The unverified items in §2. The two design documents
+that were cited but did not exist are resolved since this audit was written —
+see the last bullet of §2. D5 is no longer among them — see below.
 
 ### D5 — decided and fixed (`NEXT_AGENT_V3.md` Task B)
 

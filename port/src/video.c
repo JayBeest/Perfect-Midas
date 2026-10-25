@@ -842,8 +842,8 @@ static void videoApplyVolumes(void);
  * 120 fps cap means a 120 Hz tick.
  *
  * Two things this deliberately will not do:
- *  - Take the tick below 60. The engine's authored rate is 60 and the raised-tick work
- *    (docs/port/tick-rate-binding.md) only goes up; a 30 fps cap still gets a 60 Hz sim.
+ *  - Take the tick below 60. The engine's authored rate is 60, and the raised-tick work
+ *    (docs/port/tick-and-field-accounting.md 13) only goes up; a 30 fps cap still gets 60 Hz.
  *  - Override tickhz=hw, the console's own frame pacing (an expert ini-only mode). */
 static void videoPersistDerivedTick(void);
 static int videoSetDisplayOption(const char *key, const char *value);

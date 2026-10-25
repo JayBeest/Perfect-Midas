@@ -239,8 +239,9 @@ animation, ammo, countdowns) stays at 60 via `g_ClockTimer > 0` guards. The
 `TPS 60` digit here is the most misleading of the four cases, because the sim is
 demonstrably *not* running at 60.
 
-**`tickhz=hw`** (`midas.ini tickhz=hw`, or Max FPS = hardware; parsed at
-`port/src/video.c:1133-1172`, which calls `portTickSetHz(60)` +
+**`tickhz=hw`** (`midas.ini tickhz=hw`, or Max FPS = hardware; parsed by
+`videoSetDisplayOption`, the `tickhz` key in `port/src/video.c`, which calls
+`portTickSetHz(60)` +
 `portTickSetHwPace(1)`): classic 60 Hz sim, but each frame is held for the number
 of fields a linear RDP-workload model predicts (`portHwPredictMs()` in
 `frametiming.c`; hold at `boss.c:599-606`). `FPS` = model's rate, `TPS` =
@@ -708,12 +709,13 @@ is still open". It has since been measured, and it does not. See §11.1.
 
 ## 10. Open questions
 
-- `src/game/frametiming.c` (the hw-pacing model header and the load-hitch
-  note) cites `docs/port/n64-hw-pacing.md` (also
-  `src/game/ramromreplay.c:510`), and `port/src/video.c:844` cites
-  `docs/port/tick-rate-binding.md`. **Neither file exists.** Both are
-  load-bearing for the hw model and the raised-tick design; this document is not
-  a substitute for them. §11 is the evidence that belongs in the first of them.
+- `docs/port/n64-hw-pacing.md` now exists: the model, its nine coefficients,
+  the load rates, the fit's provenance, and the open question about the
+  near-points term. It was written from §11 plus `frametiming.c`; §11 stayed
+  here, and that document's header records why. `docs/port/tick-rate-binding.md`
+  was **not** written — the tick-rate binding is §13, because a second document
+  would have restated §2 and §3 and then drifted from them. Both citations from
+  `frametiming.c`, `ramromreplay.c` and `video.c` resolve now.
 - The 6-field render cap versus the 30-field total cap in `portHwPaceFields()`
   versus the 8-field credit cap in `portTickMaxStep()` (all `frametiming.c`) is
   three caps for one quantity.
@@ -736,7 +738,11 @@ is still open". It has since been measured, and it does not. See §11.1.
 Measured 2026-10-25 from a user session (`midas.ini` `maxfps=-1`, `tickhz=0`,
 `room_cache=0`; 98 log lines; screenshots at 832 fps uncapped and at 15 fps in a
 level). This section is about the **hw model**, not the tick accounting of
-§1–§5, and belongs in `docs/port/n64-hw-pacing.md` when that file is written.
+§1–§5. It is the measurement record for `docs/port/n64-hw-pacing.md`, and it
+stays here by decision: three of its four subsections are about the tick and the
+ini rather than the RDP model, and moving them would renumber references this
+document and `audio-pump-state-of-play.md` already cite. The model itself, and
+its provenance, live in that document.
 
 ### 11.1 D5 does not fire at ordinary frame rates
 
@@ -903,3 +909,56 @@ For the next session, so none of this has to be re-derived:
   `portHwPaceFields`) read by `portHitchFrame` (`port/src/hitchlog.c`), which
   prints `N fld`, `credit N of M` when the stall cap fired, and, when priced,
   `pacer asked N`.
+
+---
+
+## 13. The tick rate follows the frame cap, upward only
+
+Cited from the comment on `videoCoupleTickToMaxFps` in `port/src/video.c`: **the
+raised-tick work only goes up, so a 30 fps cap still gets a 60 Hz sim.** That
+comment used to cite `docs/port/tick-rate-binding.md`, which was never written.
+This section is the binding. It summarises what §2, §3 and §12 establish rather
+than restating them in a second document, because two documents describing one
+behaviour is how both of them go stale.
+
+**The rule.** One knob, two rates. `videoCoupleTickToMaxFps` derives the tick
+rate from `maxfps`: uncapped fps gives an uncapped tick (1000 Hz ceiling), a
+120 fps cap gives a 120 Hz tick, and the result is written back to the ini
+(F3-A, §11.3). It will not do two things:
+
+- **Take the tick below 60.** The authored rate is 60 and the raised tick is
+  only ever a raise, so a 30 fps cap still gets a 60 Hz sim: 30 presents a
+  second, two fields per tick, `f/t 2.00`, and `f/s` still 60.0. That is the
+  console at 30 fps, not a degradation.
+- **Override `tickhz=hw`.** Hardware pacing is the console's own frame pacing
+  (§3, and `docs/port/n64-hw-pacing.md`); a derived number may not replace it
+  silently.
+
+**Which number means what.** The four modes are §3. In all four, the number
+that says "the game is running at the right speed" is `f/s`, not the tick rate:
+`tickhz=120` steps the sim 120 times a second while `f/s` stays 60.0 (§2.2).
+`TPS` was the one that conflated them — `min(tick rate, 60)`, because `lv.c`
+increments `g_GlobalTickCount` once per tick that advanced the clock by a whole
+field (§2.1) — so it tracked FPS below 60 and read 60 above it. The overlay and
+the log publish `tk` and `f/t` instead; §12 says where each lives.
+
+**The admission gate.** `portTickGateCounts()` (§8) admits one tick per half
+field at the configured rate, so `tk` is *bounded by the present rate*: on a
+machine presenting 38 times a second, `tk` reads 38 at `tickhz=120` (the
+third-pass audit's F2). Configured tick rate and achieved tick rate are
+different numbers, and only the second is displayed.
+
+**Which counter answers which question** (§12):
+
+- `g_PortFieldsTicked` — fields the simulation actually applied, advanced in
+  `lv.c` beside `g_GlobalTimer += g_ClockTimer`. The only one that measures
+  **speed**. Monotonic across a stage load, which is why it can carry a rate
+  through one.
+- `g_PortTickSerial` — ticks that reached `lvlTick`. This is `tk`.
+- `g_PortTicksAdmitted` — admitted ticks, incremented *before* the
+  `pendingGfx < 2` backpressure guard, so it counts ticks that never reached the
+  sim. Right for `title.c`'s per-admitted-tick stepping, wrong for any rate.
+
+**Still unverified, and both need hardware:** sub-ticking (`f/t` below 1.00 needs
+a renderer faster than 60 fps; this machine peaks near 38 and the lowest `f/t`
+measured anywhere is 1.03), and vsync pinning `tk` at 60 on a real 60 Hz panel.

@@ -595,8 +595,8 @@ u32 g_PortHwChrsLast;          /* the previous tick's count (GE HW pacing / GE_H
  * The frame time comes from a linear model of the RDP workload (rebuilt from
  * the same display list, gfx_api.h PortHwLoad) plus the number of characters
  * simulated, fitted against fields recorded by the attract demos on real
- * hardware (docs/port/n64-hw-pacing.md). GE_HWSCALE=<f> scales the prediction
- * (1.0 = the fit); GE_HWDBG=1 prints it once a second. */
+ * hardware (docs/port/n64-hw-pacing.md, "The render model"). GE_HWSCALE=<f>
+ * scales the prediction (1.0 = the fit); GE_HWDBG=1 prints it once a second. */
 #include "../../port/fast3d/gfx_api.h"
 #include "romdata.h"
 extern s32 get_is_ramrom_flag(void);
@@ -655,7 +655,7 @@ f32 portHwPredictMs(const struct PortHwLoad *h, u32 chrs)
  * it before the first frame).
  *
  * The rates are fitted to a real console (the N64 bench ROM, 867 file loads
- * over every mission, docs/port/n64-hw-pacing.md):
+ * over every mission, docs/port/n64-hw-pacing.md, "Load charges"):
  *   cart DMA   174 us per read + 0.2025 us per byte
  *   inflate    714 us + 1.254 us per compressed byte during a stage load,
  *              326 us + 1.479 us per compressed byte in play (the other

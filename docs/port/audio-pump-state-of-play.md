@@ -239,22 +239,33 @@ D5 was about.**
 
 Ordered by what a reader should do next, not by severity.
 
-### 4.1 Two cited documents do not exist — doable now
+### 4.1 Two cited documents did not exist — closed 2026-10-25
 
 `src/game/frametiming.c` (the hw model header and the load-hitch note) and
-`src/game/ramromreplay.c:510` cite `docs/port/n64-hw-pacing.md`.
-`port/src/video.c:846` cites `docs/port/tick-rate-binding.md`. Neither file
-exists in the tree or on disk.
+`src/game/ramromreplay.c` cite `docs/port/n64-hw-pacing.md`.
+`port/src/video.c` (the comment on `videoCoupleTickToMaxFps`) cited
+`docs/port/tick-rate-binding.md`. Neither file existed.
 
-This is the branch's own defect class — a reader following a reference into
-nothing — and it costs nothing to fix properly, because
-`tick-and-field-accounting.md` §11 **is** the evidence that belongs in the first
-one: the hw model, the 8.7-second Dam hold, the coefficient breakdown, the
-`GE_STAGE` limitation. §11 needs a home, not research.
+**Both citations resolve now.**
 
-Reminder: `docs/` is gitignored, so a new file there needs `git add -f` or it
-will exist on one disk and nowhere else. The three tracked docs are all
-force-added.
+- **`docs/port/n64-hw-pacing.md` was written** — the model's nine coefficients
+  and the two that fitted to zero, the 6-field render cap and the 30-field total
+  cap, the cart-DMA and inflate rates, the stage-load CPU terms, the fit's
+  provenance (and the fact that `hwfit.py` is not in the tree), and the open
+  question about the near-points coefficient. It is assembly, not research: the
+  material was in `frametiming.c` and in §11 of the design record.
+- **`tick-rate-binding.md` was NOT written.** The binding is
+  `tick-and-field-accounting.md` §13, and `video.c` now cites that section. A
+  second document would have restated §2 and §3 and then drifted from them — the
+  failure §5's documentation map is about.
+- **§11 stayed in the design record**, by decision recorded in both documents:
+  three of its four subsections are about the tick and the ini, not the RDP
+  model, and moving them would renumber references that are already cited.
+
+Reminder for the next new file here: `docs/` is gitignored, so it needs
+`git add -f` or it will exist on one disk and nowhere else. Verify with
+`git ls-files docs/port/`, not with the `git add` warning — that fires even for
+tracked files and is therefore useless as a signal.
 
 ### 4.2 `lv.c`'s comment still asserts something false — needs a decision
 
@@ -350,12 +361,46 @@ from an **Apple Software Renderer** context — front-end frames ~25 ms, Dam
 frames ~360–890 ms. Say which renderer a number came from before drawing a
 conclusion about frame rates above 60.
 
+### 4.8 `src/game/frametiming.c` has no test target — decision: not this pass
+
+`grep frametiming CMakeLists.txt port/tests/` returns nothing. `waitForNextFrame`,
+`portTickCreditCap`, `portHwPaceFields` and the field accumulator are reached
+only through a live game. That is the largest untested timing surface on the
+branch, and it is where D5 lived. **Decided 2026-10-25: no harness in this pass,
+with the reasons stated rather than left implicit.**
+
+- **What is already tested:** the *policy* those functions obey.
+  `portStatsStepCap`, `portStatsMeasuredFields` and `portStatsCreditedFields` are
+  pure and under `ctest`, and D5's whole rule table lives there. The glue that
+  gathers their inputs is not tested.
+- **What a harness would need, measured:** an `osGetCount` stub (7 call sites),
+  definitions for the engine symbols the file externs (42 `extern` declarations,
+  including `g_PortHwChrsTicked` from `chr.c` and `g_PortHwLoadLast` from the gfx
+  layer — `port/src/headless_stubs.c` already stubs the latter for another
+  purpose), and the part that makes it real work: the file caches configuration
+  in a dozen process-global statics fed by 30 `getenv` reads, so one process
+  cannot exercise two configurations. That is one process per configuration,
+  driven from a script — a different artifact from the nine sub-second tests.
+- **What a live run *can* prove:** the composition. D5's evidence
+  (`credit 8 of 52` → `credit 12 of 57`) is exactly the integration, and no unit
+  test produces it.
+- **What a live run *cannot* prove:** any single branch of that composition. On
+  this machine a run measures the model, the renderer and the loop together and
+  cannot say which set the frame time — every hw-pacing number here comes from an
+  `Apple Software Renderer` context where the renderer, not the model, sets the
+  frame length.
+
+If a later pass builds it, the honest shape is: extract the accumulate-and-clamp
+step of `waitForNextFrame` into `port/src/tick_stats.c` as a pure function (whole
+fields, the banked remainder, and what the clamp does to the remainder), test
+that, and leave the rest as glue.
+
 ---
 
 ## 5. Documentation map
 
-The six places that describe the same behaviour overlap on purpose and drift
-apart when one moves alone. Touch one, check the rest:
+These pages describe the same behaviour, overlap on purpose, and drift apart
+when one moves alone. Touch one, check the rest:
 
 - `tools/console_help.txt` — the in-game console and the log legend. Sections
   THE HITCH LINE, READING THE BLOCK, WHAT TO REPORT.
@@ -363,6 +408,8 @@ apart when one moves alone. Touch one, check the rest:
 - `port/src/audio_pc.c` — the emitted log legend (must agree with
   `console_help.txt`).
 - `docs/port/tick-and-field-accounting.md` — the design record.
+- `docs/port/n64-hw-pacing.md` — the hw-pacing cost model: coefficients, load
+  rates, provenance, and what a hold does and does not mean.
 - `docs/port/tps-the-lie.md` — the original overlay argument; the historical
   record of why `TPS` went away.
 - `docs/port/audio-pump-history.md` — the pump's generations and its own defect
@@ -373,6 +420,15 @@ Counts and commit numbers in these pages rot on every commit. Prefer "the
 commits that did X" to a total; where a count is load-bearing it is stated once,
 here, and should be derived from `git rev-list --count 3a1ab62..HEAD` rather
 than copied forward.
+
+**Citation policy, adopted 2026-10-25.** Line numbers in these pages rot with
+every nearby edit, and this branch edits `video.c` and `frametiming.c`
+constantly — four citations into `video.c` were stale within two commits, and one
+of them described a branch that no longer existed. So: cite the **symbol or the
+section**, and use a line number only where the line *is* the point (a
+constant's definition, a branch that was deleted). When a cited line moves, point
+at the symbol instead of renumbering — a renumbered citation is right until the
+next commit, and a symbol citation fails loudly when it goes wrong.
 
 The branch's own history says **every pass fixed real defects and introduced at
 least one of its own**. Anyone doing the next pass should write their findings
