@@ -1,11 +1,42 @@
 # The audio-pump branch: state of play
 
-Branch `audio-pump-wallclock_gen4`, base `3a1ab62`, **15 commits**. This is the
+Branch `audio-pump-wallclock_gen4`, base `3a1ab62`, 16 commits (re-derive with
+`git rev-list --count 3a1ab62..HEAD`). This is the
 entry point for the next session: what the branch set out to do, what is fixed,
 what is not, and which claims rest on measurement rather than inference.
 
 It does not replace the two long documents. It tells you which of them to open
 and why.
+
+## The 16 commits, in five phases
+
+Read them as these units rather than serially. Every one builds clean and passes
+`ctest` 9/9 on its own — that was measured, not assumed (see §8).
+
+**A. The four numbers** (`ca41f25`, `97659f6`, `85fa9f1`) — the tick and field
+rate maths as pure functions, `fields/s` published, the block showing
+`tk`/`f/s`/`f/t` instead of `TPS`.
+
+**B. Documenting and instrumenting them** (`9873f43`, `bbc5c99`, `2f8a6d0`,
+`6d02aa1`) — the design record, the manual claims, `TPS` dropped from the log,
+and the hw field-hold audit in the hitch line.
+
+**C. The audit and its corrections** (`52807f7`, `cb98c39`, `dbed958`) — a
+third-pass execution audit falsified four of phase B's claims; these correct
+them, replace the misleading `fld`/`model held` comparison with a clamp-site
+measurement, and record the audit itself.
+
+**D. The two deferred items** (`87af349`, `17bf80b`) — the `tickhz` writer
+(F3-A) and the stall cap yielding to a hardware-pacing hold (D5).
+
+**E. What that work exposed** (`ef16465`, `df881c9`, `f04d421`, `af78f4a`) —
+the state-of-play page, the pump's underrun ratchet defect found while checking
+an audio complaint, the harnesses made durable, and a documentation sweep.
+
+Phase C is the interesting one for a reader: it contains the branch's own
+retraction, and the two commits in it that supersede earlier ones are the
+strongest argument anyone could make for folding this history (§8 says why that
+argument loses).
 
 - **`docs/port/audio-pump-audit-pass3.md`** — the execution audit. Findings
   F1–F6, the execution record with predictions written before each run, and the
