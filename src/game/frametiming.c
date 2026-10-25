@@ -122,8 +122,7 @@ static s32 portTickMaxStepExplicit(void)
  *  - g_PortHwFieldsHeld is the hold boss.c just waited for, published by
  *    portHwPaceFields() when it priced the frame. Reading it here is what
  *    keeps the contract one-way: the pacer publishes, the clamp reads, and no
- *    expectation is threaded back through boss.c (the objection recorded in
- *    docs/port/tick-and-field-accounting.md 5.2).
+ *    expectation is threaded back through boss.c.
  *  - an explicit GE_TICKMAXSTEP wins, because it is how this cap is measured.
  *
  * Bounded by the hold, which portHwPaceFields() caps at 30 fields - so the
@@ -197,7 +196,7 @@ s32 g_PortStatFieldsPerTickX100 = 0;
 /* Monotonic since boot: the fields credited to the sim. LvlStageLoad zeroes
  * g_GlobalTickCount (lv.c), so the tick counter cannot be used to measure a
  * rate across a load - this one is never reset. See the stat pass in
- * gfx_sdl2.cpp and docs/port/tick-and-field-accounting.md. */
+ * gfx_sdl2.cpp, which prints all four. */
 u32 g_PortFieldsTicked = 0;
 
 /* The stall cap's last verdict, for the hitch log (port/src/hitchlog.c).
@@ -595,8 +594,8 @@ u32 g_PortHwChrsLast;          /* the previous tick's count (GE HW pacing / GE_H
  * The frame time comes from a linear model of the RDP workload (rebuilt from
  * the same display list, gfx_api.h PortHwLoad) plus the number of characters
  * simulated, fitted against fields recorded by the attract demos on real
- * hardware (docs/port/n64-hw-pacing.md, "The render model"). GE_HWSCALE=<f>
- * scales the prediction (1.0 = the fit); GE_HWDBG=1 prints it once a second. */
+ * hardware. GE_HWSCALE=<f> scales the prediction (1.0 = the fit); GE_HWDBG=1
+ * prints it once a second. */
 #include "../../port/fast3d/gfx_api.h"
 #include "romdata.h"
 extern s32 get_is_ramrom_flag(void);
@@ -655,7 +654,7 @@ f32 portHwPredictMs(const struct PortHwLoad *h, u32 chrs)
  * it before the first frame).
  *
  * The rates are fitted to a real console (the N64 bench ROM, 867 file loads
- * over every mission, docs/port/n64-hw-pacing.md, "Load charges"):
+ * over every mission):
  *   cart DMA   174 us per read + 0.2025 us per byte
  *   inflate    714 us + 1.254 us per compressed byte during a stage load,
  *              326 us + 1.479 us per compressed byte in play (the other

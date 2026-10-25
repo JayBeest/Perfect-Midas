@@ -12715,7 +12715,7 @@ static Gfx *portDrawAudioPumpStats(Gfx *gdl, s32 x, s32 y)
      * and it tracked FPS below 60, which is exactly the reading that looked like
      * a bug in the hw-mode capture. f/s and f/t replace it here, and TPS is
      * gone from the log and the title bar too, so nothing prints it any more.
-     * See docs/port/tick-and-field-accounting.md. */
+     * See frametiming.h for the two that replaced it. */
     sprintf(line[rows++], "%dfps %dtk %d.%df/s %d.%02df/t",
             (int) g_PortStatFps, (int) g_PortStatTicks,
             (int) (g_PortStatFieldsX10 / 10), (int) (g_PortStatFieldsX10 % 10),

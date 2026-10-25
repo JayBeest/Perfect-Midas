@@ -10,7 +10,7 @@
  * to perform. port/tests/classic_mode.c drives it.
  *
  * Why it exists: that rule was written three times in three surfaces and skipped
- * by four entry points. See docs/port/settings-and-save-audit.md.
+ * by four entry points. SETTINGS.md documents the keys it owns.
  */
 
 #include <stddef.h>

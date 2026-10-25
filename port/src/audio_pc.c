@@ -17,8 +17,7 @@
  *      frame from the main loop: alAudioFrame() -> portAcmdRun() ->
  *      SDL_QueueAudio().
  *
- *      PACING POLICY (see audio_pace.h for the tested rules, and
- *      docs/port/audio-pump-history.md for what came before):
+ *      PACING POLICY (see audio_pace.h for the tested rules):
  *
  *      - WALL TIME is the sole authority for how much to synthesise.
  *        alAudioFrame is the only thing that advances the game's audio
@@ -53,8 +52,8 @@
  *      48000, so the sink is then resampled by the OS or by a fallback
  *      driver, and drift between our rate and the DAC's has nowhere to
  *      go but the queue. An SDL_AudioStream (22050 -> device rate) would
- *      absorb both. Scoped in docs/port/rate_prompt.md; do it as its own
- *      change so a crackle report can tell the two fixes apart.
+ *      absorb both. Do it as its own change, so a crackle report can tell
+ *      the two fixes apart.
  *
  * RAW16 wavetables are converted to native s16 when loading the bank;
  * ADPCM wavetables remain byte streams. A_LOADBUFF copies both unchanged.

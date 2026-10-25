@@ -34,8 +34,8 @@ Reading the output:
                PORT_AUDIO_TARGET_STEP and it is now reaching the queue. Before
                commit df881c9 this was masked below ~8.6 fps.
   tgt pinned   target == interval + 12 every line, never rising even after a
-               dry: the ratchet is being discarded again - see
-               docs/port/audio-pump-history.md section 9.
+               dry: the ratchet is being discarded again - the pump is not
+               learning from its dry events.
   over>0       frames were refused because they did not fit under `cap`.
   stall 1      the device has played nothing for 2 s; the pump has taken over
                the clock. A device-layer problem, not a pump one.

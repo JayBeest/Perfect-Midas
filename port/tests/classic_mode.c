@@ -4,7 +4,7 @@
  * Drives the shipped functions in port/src/classic_mode.c against value sets
  * computed by hand, so the preset's semantics are pinned without a window, a
  * GPU, a ROM or a midas.ini. The cases below are written from the four defects
- * in docs/port/settings-and-save-audit.md, not from the code, so a rewrite that
+ * the settings audit found, not from the code, so a rewrite that
  * keeps the bugs fails here.
  *
  * Build standalone:

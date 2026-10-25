@@ -870,8 +870,8 @@ static void videoApplyVolumes(void);
  * 120 fps cap means a 120 Hz tick.
  *
  * Two things this deliberately will not do:
- *  - Take the tick below 60. The engine's authored rate is 60, and the raised-tick work
- *    (docs/port/tick-and-field-accounting.md 13) only goes up; a 30 fps cap still gets 60 Hz.
+ *  - Take the tick below 60. The engine's authored rate is 60, and the raised-tick work only
+ *    goes up; a 30 fps cap still gets 60 Hz.
  *  - Override tickhz=hw, the console's own frame pacing (an expert ini-only mode). */
 static void videoPersistDerivedTick(void);
 static int videoSetDisplayOption(const char *key, const char *value);
@@ -957,9 +957,9 @@ static void videoCoupleTickToMaxFps(void)
  * This includes writing the literal `hw` when maxfps is -1. It did not, until F3-A: the
  * function returned early on the resolved -1, so a session that ran hw pacing left whatever
  * numeric tickhz the file already had, and the file described a different mode from the one
- * that ran. That is the invariant docs/port/tick-and-field-accounting.md §11.3 states - the
- * writer must never emit a pair the loader resolves differently from what was running - and
- * it is what the loader's own tickhz=hw arm records as written (-1). */
+ * that ran. The invariant is that the writer never emits a pair the loader resolves
+ * differently from what was running, and the loader's own tickhz=hw arm records the literal
+ * `hw` as written (-1), so this does too. */
 static void videoPersistDerivedTick(void)
 {
     char wasbuf[PORT_TICK_INI_BUF];

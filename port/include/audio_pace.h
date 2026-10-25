@@ -147,9 +147,8 @@ unsigned portAudioPaceMinTarget(unsigned dt_ms, const PortAudioPaceCfg *cfg);
  * The sum keeps ordinary frame rates identical - there the floor is below the
  * configured target and the learned term is what moves - and gives low frame
  * rates the headroom the ratchet was always meant to provide, bounded by
- * target_max - target. Latency rises with it; docs/port/audio-pump-history.md
- * and tools/console_help.txt both record that at single-digit frame rates a
- * backlog is preferred to a gap.
+ * target_max - target. Latency rises with it; tools/console_help.txt records
+ * that at single-digit frame rates a backlog is preferred to a gap.
  */
 unsigned portAudioPaceEffectiveTarget(unsigned floor_bytes, unsigned ratcheted,
                                       const PortAudioPaceCfg *cfg);

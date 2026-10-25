@@ -856,8 +856,7 @@ static void gfx_sdl_maybe_screenshot(void) {
  * was only true while frames fitted inside one field. The real field counter is
  * g_PortFieldsTicked (frametiming.c), shown as f/s: THAT is the one that reads
  * 60.0 whenever simulated time is keeping up, and it is the only one that
- * exposes a sim losing time under `tickhz=hw`. See
- * docs/port/tick-and-field-accounting.md.
+ * exposes a sim losing time under `tickhz=hw`. frametiming.h defines both.
  *
  * The numbers exist to separate failure modes that all read "60 fps | 60 tk"
  * from the outside:

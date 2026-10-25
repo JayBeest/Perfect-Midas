@@ -507,8 +507,7 @@ void iterate_ramrom_entries_handle_camera_out(void)
 #ifndef TARGET_N64
     port_demo_ticks++;
     { /* GE_HWCAL=1: log the N64's recorded timing for this tick beside the port's estimate of the
-       * previous frame's RDP workload, to calibrate hardware pacing
-       * (docs/port/n64-hw-pacing.md, "The render model") */
+       * previous frame's RDP workload, to calibrate hardware pacing. */
         static s32 hc = -1;
         if (hc < 0) { extern char *getenv(const char *); hc = getenv("GE_HWCAL") != NULL; }
         if (hc) {

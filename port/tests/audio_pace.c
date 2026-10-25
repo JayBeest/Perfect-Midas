@@ -516,8 +516,7 @@ static void simDrain(unsigned *queued, unsigned pump_ms, long drift_ppm,
  * - it exercises the one property the queue has to absorb: the next interval is
  * not the one the last pump measured, and the pump does not find that out until
  * the device has already played. Bounded deliberately; an unbounded interval is
- * a hitch, not a frame rate, and no queue size covers one (audio-pump-history.md
- * section 9). */
+ * a hitch, not a frame rate, and no queue size covers one. */
 static unsigned jitteredMs(unsigned base_ms, unsigned pct, unsigned i)
 {
     unsigned span = base_ms * pct / 100u;

@@ -32,7 +32,7 @@ macOS, and `ProjectMidas.exe` on Windows. See `BUILD.md`.
 `tickhz=hw` runs the classic 60 Hz simulation and holds each frame for the number
 of video fields the N64 would have needed to draw it. It is the mode that
 reproduces the console's frame rate, its slowdown in heavy views, and its stepped
-motion. What it costs and why: `docs/port/n64-hw-pacing.md`.
+motion. What it costs, and why the holds are shaped the way they are: §2.5 and §5.3.
 
 ### 2.1 The reliable way — the settings file
 
@@ -123,7 +123,7 @@ observed.)
 
 - **Entering some stages is slow on purpose.** The Dam stage load is priced at
   ~8.7 s and the game holds for all of it with nothing drawn — a white screen.
-  That is fidelity, not a hang. See `docs/port/n64-hw-pacing.md` §5.
+  That is fidelity, not a hang.
 - **Audio latency rises when frames are slow.** The pump must bridge a whole frame
   interval, so at 15 fps that is ~67 ms of buffer, and single-digit frame rates
   buy a larger backlog deliberately rather than crackle.
@@ -304,8 +304,7 @@ is usually cheaper than a fixed frame count — that is what
 
 ### 5.3 The hardware-pacing model
 
-Only meaningful with hw pacing on (§2). Documented at length in
-`docs/port/n64-hw-pacing.md` §6.
+Only meaningful with hw pacing on (§2).
 
 | Variable | Effect |
 | --- | --- |

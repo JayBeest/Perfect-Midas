@@ -37,7 +37,7 @@ extern s32 g_PortStatTps;   /* computed but read by nothing; see frametiming.c *
  * its pendingGfx backpressure guard and so counts ticks that never stepped. */
 extern s32 g_PortStatTicks;
 /* The two numbers that say whether SIMULATED TIME is keeping up, from the same
- * window (see docs/port/tick-and-field-accounting.md):
+ * window (see g_PortFieldsTicked in frametiming.c):
  *   g_PortStatFieldsX10        60Hz fields credited to the sim per second, x10.
  *                              600 = 60.0 fields/s = game speed correct. This
  *                              is the invariant: it holds at any tick rate and
