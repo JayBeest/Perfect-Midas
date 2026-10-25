@@ -1,153 +1,72 @@
 [This is a fork of Project Midas](https://github.com/murkantor/Project-Midas)
 
-![Project Midas](port/include/presskit/PM%20thin%201%20-%20full.png)
+Project Dark (Perfect Midas)
 
-# Project Midas
+    The bridge between the C legacy and the memory-safe, thread-safe future.
 
-This is a video game about Jimothy's presumed-dead best friend Jarvis turns out to be alive, and in possession of a space laser he intends to point at a city - so Jimothy goes to the Cuban jungle and drops Jarvis off a satellite dish.
+What is this?
 
-Project Midas is a work-in-progress PC port of GE, built from the N64 decompilation. It runs on Windows and Linux and reads its game data from your own copy of the US cart.
+Project Dark (Perfect Midas) is a fork of the GoldenEye 007 PC port (Project Midas), maintained under the OmniDyne Industries ecosystem.
 
-## AI Disclaimer
+While the original Project Midas remains the stable, mainstream preservation port, this fork serves as the test-bench and architectural vanguard for the next generation of Rareware PC ports.
 
-Claude was used in the making of this project. If you don't agree with this, please do not download either the executables or the source.
+The name reflects our dual trajectory:
 
-## Playing
+    Perfect Midas (C): The present. A highly optimized, cross-platform (Windows, Linux, native macOS) C engine with deep audio and rendering fixes. It serves as the reference implementation for the OmniDyne Shared Format.
 
-1. Put your GE (USA) cart image in the `Data` folder next to the executable. See `Data/README.txt` for the accepted formats and other ways to point the game at it.
-2. Run `ProjectMidas.exe` (Windows) or `ProjectMidas` (Linux).
+    Project Dark (Rust): The future. A ground-up rewrite of the engine leveraging Rust’s memory safety and fearless concurrency (thread-awareness), ensuring that audio, rendering, and netplay modules can run in parallel without data races.
 
-Files next to the executable:
+The OmniDyne Ecosystem
 
-| Path | What it is |
-| --- | --- |
-| `midas.ini` | Settings. Written on first run; delete it to restore the defaults. See `midas_ini_help.txt`. |
-| `Data/` | Your cart image goes here. |
-| `Data/Saves/eeprom.bin` | Save file. |
-| `Data/Profiles/` | Player profiles (`.geprofile`) and lifetime multiplayer stats (`.gestats`). |
-| `Data/WeaponSets/` | Custom multiplayer weapon sets (`.gewset`). |
-| `Data/MatchSettings/` | Saved multiplayer settings (`.gemp`), from Load / Save Settings. |
-| `Data/Devices/` | Per-device settings (`.gedevice`). Keyboard and mouse binds are in `kbm.gedevice`. |
-| `gamecontrollerdb.txt` | SDL controller mappings. |
-| `gamecontrollerdefault.txt` | Built-in controller layouts. |
-| `gamecontrolleruser.txt` | Your saved controller layouts. |
-| `Data/Logs/ge_direct.log` | The run log on Windows (the game opens no console window). |
-| `Data/Logs/crash.log` | Written if the game crashes. |
-| `Mods/` | Reserved for modded carts. This build loads the stock cart only. |
+OmniDyne Industries aims to solve the fragmentation of the GE/PD modding scene. This repository is where we build the rails.
 
-An older `ge.ini` is renamed to `midas.ini` automatically on first run.
+    The Universal Modding Format: We are building a shared, platform-agnostic format for the modding community. A standardized data model means mods, level editors, and character injectors will work seamlessly across GE, PD, and future engines.
 
-## Building
+    Modular Packaging & Distribution: No more bolted-on EXEs. We are designing a unified packaging standard so players can easily install, update, and manage mods, character packs, and total conversions.
 
-The build runs in Docker, which has every tool and library both builds need. You also need the GE (USA) cart as `baserom.u.z64` in the repository root:
+    Modular Netplay: Netcode should not be a hardcoded fork. We are architecting netplay as a pluggable module, allowing different implementations (Dab's, Kai's, Cath's) to be benchmarked, tested, and swapped without breaking the core engine.
 
-```
-sha1: abe01e4aeb033b6c0836819f549c791b26cfde83
-```
+    Diagnostic Tooling: We prioritize observability. This fork includes the Gen 4 Audio Pump (a wall-clock/level-controller hybrid that fixes long-session drift) and an in-game diagnostic console (cl_audio_pump, cl_audio_log) to expose engine telemetry.
 
-### On Windows: use WSL
+Core Tenets of Development
+1. Clean Slices & Testability
 
-The commands below are for a Linux shell. On Windows, run them in WSL:
+We do not merge 5,000-line unreadable PRs. A commit must do exactly one thing. We write tests (and mutation audits) to prove our tests can actually fail. If the pacing code breaks, the diagnostic log will tell us exactly why.
+2. AI-Assisted, Human-Reviewed
 
-1. Install WSL with Ubuntu (`wsl --install` in PowerShell), and turn on WSL integration in Docker Desktop (Settings > Resources > WSL integration).
-2. Open the Ubuntu terminal and clone the repository inside WSL, not under `/mnt/c` (much faster):
-   ```
-   cd ~
-   git clone https://github.com/murkantor/Project-Midas.git
-   cd Project-Midas
-   ```
-3. Copy your cart in, for example from your Windows Downloads folder:
-   ```
-   cp /mnt/c/Users/<you>/Downloads/baserom.u.z64 .
-   ```
+We use AI tools (like Codewhale) aggressively to map codebases, write tests, and find edge cases. However, AI is a tool, not an author. Every line of generated code must be understood, tested, and owned by a human.
+3. Concurrency & Thread Safety
 
-### Build steps
+As we move toward Project Dark (Rust), the goal is to decouple the game loop, the audio synthesizer, and the renderer into independent threads. The C engine (Perfect Midas) provides the stable baseline; the Rust engine will provide the safe, parallel future.
+4. Preservation and Convergence
 
-1. Build the image (once):
-   ```
-   docker build --network=host --build-arg HOST_UID=$(id -u) --build-arg HOST_GID=$(id -g) -t goldeneye .
-   ```
-2. Start a container in the repository:
-   ```
-   docker run --rm -it -v $(pwd):/home/dev/project goldeneye
-   ```
-3. Extract the assets (once):
-   ```
-   ./scripts/extract_baserom.u.sh
-   make convert_props convert_chrs convert_guns combine_images
-   ```
-4. Build for Windows (x86):
-   ```
-   cmake -B build_win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-i686.cmake -DCMAKE_BUILD_TYPE=Debug -DGE_VIDEO=ON -DSDL2_MINGW_ROOT=$HOME/sdl2-mingw/SDL2-2.30.11/i686-w64-mingw32
-   cmake --build build_win -j$(nproc)
-   ```
-5. Build for Linux:
-   ```
-   cmake -B build_pc -DCMAKE_BUILD_TYPE=Debug -DGE_VIDEO=ON -DSDL2_LINUX_ROOT=$HOME/sdl2-linux-i686
-   cmake --build build_pc -j$(nproc)
-   ```
+We do not throw away the legacy C code; we honor it. But we do not let the 32-bit ABI dictate the future. We are converging GoldenEye and Perfect Dark toward a unified, native, modern architecture.
+Building and Testing
 
-| Build | Game | Next to it |
-| --- | --- | --- |
-| Windows | `build_win/ProjectMidas.exe` | `SDL2.dll`, the controller files, `Data/` |
-| Linux | `build_pc/ProjectMidas` | the controller files, `Data/` |
+(Documentation WIP - link to specific build instructions for Mac/Linux/Windows here)
+bash
 
-To play, put a copy of `baserom.u.z64` in that build's `Data/` folder. On Windows, copy the whole `build_win` folder somewhere in Windows (from WSL: `explorer.exe build_win`) and run `ProjectMidas.exe` there. The Linux build needs 32-bit SDL2 and OpenGL on the machine that runs it. On Ubuntu or Debian:
+# Example build for native macOS
+cmake -S . -B build_macos -G Ninja -DCMAKE_BUILD_TYPE=Release -DGE_VIDEO=ON -DGE_PORT_TESTS=ON
+cmake --build build_macos --parallel
+ctest --test-dir build_macos --output-on-failure
 
-```
-sudo dpkg --add-architecture i386
-sudo apt update
-sudo apt install libsdl2-2.0-0:i386 libgl1:i386
-```
+Credits & Origins
 
-## Known issues
+This project stands on the shoulders of giants.
 
-- On some Linux systems, levels draw as a few large blank triangles. Starting the game with these environment variables works around it:
-  ```
-  GE_FULLHEIGHT=0 GE_EDGEINSET=1 ./ProjectMidas
-  ```
+    Murkantor & the Project Midas team for the phenomenal base C port.
 
-## Contributing
+    The Perfect Dark Decomp team for the architectural inspiration.
 
-Co-op, netplay and mod loading are already in progress. Please contribute here rather than forking; see [CONTRIBUTING.md](CONTRIBUTING.md) for what a good pull request looks like, including the rules for AI-assisted changes.
+    Dab, Catherine, Wren, and the broader community for pushing the boundaries of what the engine can do.
 
-## License
+    The OmniDyne Architects for the shared format mapping.
 
-The Project Midas port code is MIT licensed; see [LICENSE](LICENSE). The license does not cover the decompiled game code, GE itself or its assets. Bundled third-party code keeps its own license; see `tools/THIRD_PARTY_NOTICES.txt`.
+The Signature
+<To be reviewed by humans. Built with an agent. Tested against reality.>
 
-## Acknowledgements
+All of it. Fine.
 
-Project Midas builds on the work of many people and projects.
-
-### Projects and references
-
-- [GoldenEye decompilation](https://github.com/n64decomp/007) by KholdFuzion and contributors
-- [GoldenEye docs](https://github.com/kholdfuzion/goldeneye_docs) by KholdFuzion and contributors
-- [Perfect Dark decompilation](https://github.com/n64decomp/perfect_dark) by Ryan Dwyer and contributors
-- [Perfect Dark PC port](https://github.com/fgsfdsfgs/perfect_dark) by fgsfds and contributors
-- [Perfect Dark netplay](https://github.com/murkantor/perfect_dark_netplay) by murkantor, a fork of fgsfds' `port-net`
-- [GE Plus](https://github.com/Joshua-1248/GoldenEye-007-Plus) by Joshua
-- [The DOOM III Network Architecture](https://mrelusive.com/publications/papers/The-DOOM-III-Network-Architecture.pdf) by J.M.P. van Waveren (id Software, 2006)
-- [ENet](https://github.com/lsalzman/enet) by Lee Salzman
-- [xdelta3](https://github.com/jmacd/xdelta) by Josh MacDonald
-- [qemu-irix](https://github.com/n64decomp/qemu-irix) by the n64decomp contributors
-- [pj64raphnetraw](https://github.com/raphnet/pj64raphnetraw) by Raphael Assenat ([raphnet-tech](https://www.raphnet-tech.com)), the reference for the raphnet adapter protocol
-- The 1964 emulator and its GE/Perfect Dark mouse injector
-
-### Bundled third-party code
-
-Each keeps its own license. The full license texts are in [`tools/THIRD_PARTY_NOTICES.txt`](tools/THIRD_PARTY_NOTICES.txt).
-
-- [Fast3D renderer](https://github.com/Emill/n64-fast3d-engine) by Emill and MaikelChan (MIT), in `port/fast3d`
-- [glad](https://github.com/Dav1dde/glad) by David Herberth, with the Khronos platform header by The Khronos Group (MIT-style), in `port/fast3d/glad`
-- [SDL2](https://github.com/libsdl-org/SDL) by Sam Lantinga and contributors (zlib), linked at runtime
-- [SDL_GameControllerDB](https://github.com/mdqinc/SDL_GameControllerDB) by Gabriel Jacobo and contributors (zlib), in `tools/gamecontrollerdb.txt`
-- [SpectNetIDE](https://github.com/Dotneteer/spectnetide) by Istvan Novak (MIT), Z80 opcode comments in `src/game/spectrum_hw.h`
-- [inflate.c](https://www.gnu.org/software/gzip/) by Mark Adler (public domain), in `src/inflate` and `src/game/zlib.c`
-- [gzip 1.2.4](https://www.gnu.org/software/gzip/) by Jean-loup Gailly (GPL-2.0+), build tool in `tools/gzipsrc`
-- [puff](https://github.com/madler/zlib/tree/develop/contrib/puff) by Mark Adler (zlib), build tool in `tools/extractor`
-- [armips](https://github.com/Kingcom/armips) by Kingcom (MIT), build tool in `tools/armips.cpp`
-- [rabbitizer](https://github.com/Decompollaborate/rabbitizer) by Decompollaborate (MIT), build tool in `tools/ido5.3_recomp/rabbitizer`
-- [ido-static-recomp](https://github.com/decompals/ido-static-recomp) by Emill and decompals (no license published), build tool in `tools/ido5.3_recomp`
-
-GE is owned by Rare, Nintendo and the Bond rights holders. This project contains no game assets.
+Many projects. One shared force.
+🐋🌊 <Geometry of the Potato> 🥔🌱
