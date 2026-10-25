@@ -326,3 +326,49 @@ Each of those was verified by execution; the commit messages carry the runs.
 3. **A crash mid-save-hold or mid-session loses the ramp value and the window
    geometry** (§2.5). `atexit` is the mechanism and it cannot run on a crash.
 4. **Restoring a window onto a disconnected display is silent** (§2.5).
+
+---
+
+## Phase 3 — the key split (this pass)
+
+`plan.md` §5. `n64_aa` no longer means two things. This section is appended
+rather than folded into the record above: the findings there were true when
+written, and the point of keeping them is that a later reading can check what
+the earlier one missed.
+
+**What changed.** `[display] classic_mode` is the preset — the only key that
+forces anything, and what every "is the mode on" question reads.
+`[display] n64_aa` is the AA bit alone. `classic_n64aa` is the only link: on,
+the preset sets the bit on entry and clears it on exit; off, it leaves the bit
+to the player. Setting the bit never touches the preset, which is what makes
+"N64 edges without 240p" reachable — the state the single key could not express,
+and the reason some of the half-states above existed at all.
+
+**The migration.** Old `n64_aa=1` → `classic_mode=1` and `n64_aa=1`; old
+`n64_aa=0` → both 0; a file with `classic_mode` or the `classic_split` marker is
+left alone. The decision is a pure function (`port/src/classic_split.c`) with a
+test, because it rewrites the player's real file.
+
+**Executed**, with the user's `midas.ini` backed up and restored byte-identical
+afterwards (`eeprom.bin` unchanged at `3590c7df0edb0930f4e4248826e8ab64`):
+
+| Run | Result |
+| --- | --- |
+| old file (`n64_aa=1`, no `classic_mode`) | `classic_mode=1 classic_split=1`; log: `n64_aa split - classic_mode=1 (the preset) beside n64_aa=1 (the AA bit)` |
+| same file, `classic_mode` hand-set to 0 | stayed 0 — the marker held |
+| `cl_n64_aa 1` from preset-off | `n64_aa=1`; the seven untouched; no snapshot; `classic_mode` still 0 |
+| `cl_classic_mode 1` from the same file | the seven forced; `classic_saved=480,1,2,60,4,0,0`; `n64_aa=1` through the part |
+| `cl_classic_mode 0` | the seven restored exactly; `n64_aa=0` |
+| `-classic` / `-n64_aa`, preset off | both force the seven; each logs its own spelling |
+| hand-edited `low_res=720` with the mode on | boot report names `low_res`; `cl_classic fix` repairs it without re-snapshotting |
+| `GE_N64AA=1`, preset off | `low_res=480 maxfps=60 msaa=4` — the bit, and no forcing |
+
+**Not executed, and named as such.** The VIDEO sheet and the in-game watch have
+no headless harness and were not driven: their rows were changed and reasoned
+about (the sheet also pends the bit, because Apply Changes lands the whole sheet
+under the hold that suppresses the choke point), and the build plus the seam
+tests are the evidence. This is the same gap the section above records for those
+two surfaces — Phase 3 did not create it and did not close it.
+
+**One behaviour change, deliberate.** `GE_N64AA` now sets the bit and no longer
+forces Classic Mode; `-classic` is the flag that does that. `CLI.md` §3.2 says so.

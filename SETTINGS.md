@@ -107,9 +107,10 @@ explains how to tell.
 
 ## 3. Classic Mode: a preset that moves the settings above
 
-Classic Mode (the `n64_aa` key, Tab by default, `-n64_aa` on the command line)
-is not one setting. It is a **preset**: turning it on remembers what seven
-settings are, then forces its own values; turning it off puts yours back.
+Classic Mode (the `classic_mode` key, Tab by default, `-classic` on the command
+line — `-n64_aa` is the same flag under its old name) is not one setting. It is a
+**preset**: turning it on remembers what seven settings are, then forces its own
+values; turning it off puts yours back.
 
 The seven, in the order they are stored:
 
@@ -125,6 +126,25 @@ feels**, without touching a single audio setting.
 Individual parts can be switched off on the CLASSIC sheet, so you can have the
 240p look without the pacing — or the pacing without the resolution. A part you
 switch off is yours: the preset leaves it alone.
+
+### Two keys, not one: `classic_mode` and `n64_aa`
+
+Until the keys were split, `n64_aa` meant both "Classic Mode is on" and "the
+N64's edge blending is on". They are separate now:
+
+- **`classic_mode`** — the preset above, and the only key that forces anything.
+- **`n64_aa`** — the AA bit on its own. Set it and nothing else changes: N64
+  edge blending, at your resolution, with your filter and your frame rate. This
+  is what "Classic Mode without the 240p" used to be unable to express.
+- **`classic_n64aa`** — the one part that links them. On (the default), turning
+  Classic Mode on sets the bit and turning it off clears it, which is what the
+  old single key did. Off, the preset leaves your bit exactly as you set it.
+
+Both are rows in the menus (VIDEO, and the in-game watch's video page). An old
+`midas.ini` with `n64_aa=1` and no `classic_mode` is migrated once, on the next
+launch: it becomes `classic_mode=1` **and** `n64_aa=1`, because that is what the
+one key meant, and a marker (`classic_split=1`) stops the migration from ever
+running twice — so turning the preset off later keeps it off.
 
 ### If the mode and its settings disagree
 
@@ -143,6 +163,8 @@ In the console:
 - `cl_classic fix` — force what should be forced, restore what should be
   restored. Does not remember anything, so it cannot overwrite your saved values
 - `cl_classic on` / `cl_classic off` — enter or leave the mode, exactly as Tab does
+- `cl_classic_mode 1` / `cl_n64_aa 1` — the same two settings by key. The first
+  forces the seven; the second turns on edge blending and changes nothing else
 
 ---
 

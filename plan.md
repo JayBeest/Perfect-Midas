@@ -421,6 +421,30 @@ a downgrade is not catastrophic.
 - The two keys cannot desynchronise into a mismatch, because only
   `classic_mode` forces anything (a test, not a review).
 
+### Landed (2026-10-25)
+
+Phase 3 shipped on `diagnostic-launch-kit`. Where it landed, and the one place
+it deliberately differs from the exit criteria above:
+
+- `classic_mode` and `n64_aa` are separate keys, `classic_n64aa` is their only
+  link, and the acceptance pair behaves differently: `cl_n64_aa 1` sets the bit
+  and forces nothing, `cl_classic_mode 1` forces the seven. Executed.
+- A pre-split file migrates once and is never touched again. Executed, marker
+  and all.
+- **The migration writes the two keys and the marker; it does not force the
+  classic values.** A pre-split `n64_aa=1 low_res=480` therefore boots with
+  Classic Mode on, `low_res` still 480, and the boot report names the mismatch
+  for `cl_classic fix` — it does not rewrite the file to `low_res=240` with a
+  snapshot, which is what the criterion above asked for. Two reasons, both
+  deliberate: forcing at load means taking a `classic_saved` snapshot and
+  writing `midas.ini` from inside the loader, and the branch's rule after the
+  four half-states is to *name* a mismatch rather than quietly overwrite the
+  player's values. The player who was already in a consistent Classic Mode
+  (anyone who used Tab) migrates to a consistent state, which is the case that
+  matters; the hand-edited one is reported, not guessed at.
+- The VIDEO sheet and the watch were changed but not driven; they have no
+  headless harness (recorded in `docs/port/settings-and-save-audit.md`, Phase 3).
+
 ---
 
 ## 6. Documentation, carried by whichever phase lands first
