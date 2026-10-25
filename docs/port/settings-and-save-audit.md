@@ -26,8 +26,9 @@ Three entry points reach that state, and only one of them is a hand edit:
 
 - **A hand-edited `n64_aa=1`** boots with the flag set and the parts wherever
   they were. This is the handoff's §0.2 finding; confirmed here (executed).
-- **The console's `cl_n64_aa`** bypasses the swap entirely, in both directions
-  (executed — the sharpest of the three, and new).
+- **The console's `cl_n64_aa`** bypassed the swap entirely, in both directions
+  (executed — the sharpest of the three, and new). **Fixed** — see §2.2 and
+  "Fixed in this pass".
 - **An env override applied when the mode is already on** — `GE_LOWRES=480
   -n64_aa` with `n64_aa=1` in the file leaves `low_res=480` under Classic Mode
   (executed), because the boot flag's `!s_CfgN64Aa` guard correctly declines to
@@ -130,11 +131,11 @@ mipmaps=1  filter_2d=1  classic_saved=480,1,2,60,4,0,0
 
 A second `-n64_aa` run left the file **byte-identical**. **Verdict: correct.**
 
-### The console bypasses the whole swap (executed) — DEFECT
+### The console bypassed the whole swap (executed) — DEFECT, FIXED
 
 `cl_n64_aa` is a Port Options row, so it goes through `portOptSetIni` →
 `optSet` → `classicPartChanged`. That handler only reacts when a **classic part
-row** changes; it does nothing for `n64_aa` itself. Confirmed:
+row** changes; it did nothing for `n64_aa` itself. Confirmed:
 
 - `cl_n64_aa 0` from a Classic-on state changed exactly one line — `n64_aa=1` →
   `n64_aa=0`. `low_res=240`, `filtering=3point`, `anisotropy=8`, `maxfps=-1`,
@@ -147,6 +148,13 @@ row** changes; it does nothing for `n64_aa` itself. Confirmed:
 So the console can produce both half-states: mode on with your own values, and
 mode off with classic values forced. **Verdict: contradicts** the documented
 meaning of the setting ("the classic_toggle key does this").
+
+**Fixed** in `options: set n64_aa by text and Classic Mode's values follow`,
+and re-executed against the same two cases: `cl_n64_aa 0` now restores all
+seven and `cl_n64_aa 1` forces all seven and writes a snapshot, with a repeated
+ON leaving the file byte-identical. The fix is at `portOptSetIni`, not in the
+console, because it is the one setter whose callers do no syncing of their own
+— which also closed the same hole for the Gameplay Options page.
 
 Why it is not fixed here: the correct repair is to route `n64_aa` through
 `portClassicSetLive` on **every** setter, not just the toggle. `portOptSetIni` is
@@ -283,7 +291,7 @@ Each is a one-line correction to a shipped file and belongs in its own change.
 
 ## Fixed in this pass
 
-Five commits, one subject each:
+Five commits for the sweep's own findings, one subject each:
 
 - `scripts: report aborted tests as FAIL, and guard the demo's exit state`
 - `video: announce GE_TICKHZ under Classic Mode whenever the mode is on`
@@ -291,13 +299,30 @@ Five commits, one subject each:
 - `docs: what room_cache is, who owns it, and the env override that broke it`
 - `video: say when GE_HWMIPMAPS=0 contradicts Classic Mode being on`
 
+Then the Classic Mode repair, from `plan.md`, in its planned order:
+
+- `tests: pin Classic Mode's forced values as a pure rule` — the rule itself
+  (`port/src/classic_mode.c`) and 15 cases written from the four defects.
+- `console: cl_classic, and the boot report for a half-applied Classic Mode` —
+  a half-state is now named at boot, and `cl_classic [status|fix|on|off]`
+  repairs it. `fix` never re-snapshots, which is asserted by turning the mode
+  off afterwards and getting the original values back.
+- `options: set n64_aa by text and Classic Mode's values follow` — the console
+  defect below, closed.
+- `tests: drive portOptSetIni, so the setter that lost the call is covered` —
+  the wiring, not the rule. Links the shipped `port_options.c` against a fake
+  option table; mutation-checked by disabling the call and by removing the
+  "only on a real change" guard, each of which fails a different case.
+
+Each of those was verified by execution; the commit messages carry the runs.
+
 ## Recorded, not fixed — the named defects
 
-1. **`cl_n64_aa` bypasses the classic-mode swap** (§2.2). Both half-states are
-   reachable from the console. Needs a three-surface change and a test.
-2. **The forced values are an event, not an invariant** (headline). Three entry
-   points; the fix is a product decision.
-3. **The `mipmaps` menu row is inert** (documentation list, item 4).
-4. **A crash mid-save-hold or mid-session loses the ramp value and the window
+1. **The forced values are an event, not an invariant** (headline). Three entry
+   points; the fix is a product decision. A half-state is now *reported* and
+   *repairable* (`cl_classic fix`), which is option 4 from `plan.md`; making it
+   unreachable is Phase 2 there.
+2. **The `mipmaps` menu row is inert** (documentation list, item 4).
+3. **A crash mid-save-hold or mid-session loses the ramp value and the window
    geometry** (§2.5). `atexit` is the mechanism and it cannot run on a crash.
-5. **Restoring a window onto a disconnected display is silent** (§2.5).
+4. **Restoring a window onto a disconnected display is silent** (§2.5).
