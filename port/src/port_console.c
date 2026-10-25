@@ -397,8 +397,8 @@ static void conCmdHelp(void)
     conPrintLn(0, "client commands (cl_ = changes the game; saved to midas.ini):");
     conPrintLn(0, "  cl_<setting> <value>  set any setting - cl_vsync 0, cl_maxfps 144");
     conPrintLn(0, "  cl_<setting>          show it");
-    conPrintLn(0, "  cl_showfps 0|1        the FPS / TPS strip");
-    conPrintLn(0, "  cl_audio_pump 0|1      live audio pump state under the FPS strip");
+    conPrintLn(0, "  cl_showfps 0|1        the FPS digits");
+    conPrintLn(0, "  cl_audio_pump 0|1      live audio pump state, replacing the FPS digits");
     conPrintLn(0, "  cl_audio_log 0|1       the same, once a second, to Data/Logs/audio_pump.log");
     conPrintLn(0, "  cl_fov <deg>          field of view (16:9 horizontal); cl_fps = cl_maxfps");
     conPrintLn(0, "  cl_hitchms <ms>       log frames this slow as 'ge: hitch:' (0 = off, not saved)");

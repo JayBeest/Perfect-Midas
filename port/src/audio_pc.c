@@ -150,9 +150,9 @@ static u32 s_StatMaxGapMs; /* longest wait between two pumps */
  * observation only - nothing in the pacing policy reads it. */
 static s32 s_StatsShown;
 /* The periodic log file (console cl_audio_log). One line a second is about
- * 100 bytes, so 6 KB a minute: enough history for a crackle report without
- * filling a disk during a long session. Flushed per line so a crash keeps the
- * tail, which is when it is worth having. */
+ * 175 bytes, so roughly 10 KB a minute: enough history for a crackle report
+ * without filling a disk during a long session. Flushed per line so a crash
+ * keeps the tail, which is when it is worth having. */
 #define PORT_AUDIO_LOG_MS 1000
 static s32 s_LogShown;
 static FILE *s_LogFile;
@@ -1085,18 +1085,22 @@ static s32 portAudioLogOpen(void)
             "# One line per second. Fields:\n"
             "#   t      ms since logging started\n"
             "#   FPS    presented frames per second\n"
-            "#   TPS    ticks per second that advanced the game clock by a field.\n"
-            "#          NOT the tick rate: lv.c increments g_GlobalTickCount once\n"
-            "#          per clock-advancing tick however many fields it absorbed,\n"
-            "#          so this is min(tick rate, 60) and it tracks FPS below 60.\n"
-            "#   tk     sim ticks per second - the real tick rate, i.e. how many\n"
-            "#          times the game actually stepped (120 at tickhz=120, where\n"
-            "#          TPS reads 60)\n"
+            "#   tk     simulation ticks per second - how many times the game\n"
+            "#          ticked, including ticks that advanced no game time\n"
+            "#          (paused, controls locked), which is why f/s is the number\n"
+            "#          to read for game speed. Held below the configured rate by\n"
+            "#          the display (vsync caps ticks at the refresh rate), by a\n"
+            "#          machine that cannot keep up, or deliberately by Hardware\n"
+            "#          pacing, whose hold prices each frame at N fields.\n"
             "#   f/s    60Hz fields credited to the sim per second. 60.0 means\n"
             "#          simulated time is keeping up. Below 60.0 the sim is losing\n"
-            "#          wall-clock time (a truncated stall, GE_TICKMAXSTEP).\n"
-            "#   f/t    fields absorbed per admitted tick: 1.00 at 60fps, above 1.00\n"
-            "#          when a frame overran a field (the console's own pacing).\n"
+            "#          wall-clock time (a truncated stall, GE_TICKMAXSTEP). 0.0\n"
+            "#          while paused, controls locked, or during a stage load.\n"
+            "#   f/t    fields credited per tick, x100: 100 = 1.00 = one field per\n"
+            "#          tick, above when a frame overran a field (the console's\n"
+            "#          own pacing), below when a raised tick rate sub-ticks.\n"
+            "#          0 = no game time credited in the window; read f/s. tk can\n"
+            "#          read 60 beside a 0 here (paused ticks still tick).\n"
             "#   pmp/s  pump calls per second. This is the GAME LOOP rate, not the\n"
             "#          frame rate: the pump runs once per loop pass and the loop\n"
             "#          passes far more often than it draws. It sits near 60/s only\n"
@@ -1194,8 +1198,7 @@ static void portAudioLogLine(u32 now)
                     / ((unsigned long long) st->rate * 4u));
 
     {
-        extern s32 g_PortStatFps; /* frametiming.c, the same numbers the strip uses */
-        extern s32 g_PortStatTps;
+        extern s32 g_PortStatFps; /* frametiming.c, the same numbers the block uses */
         extern s32 g_PortStatTicks;
         extern s32 g_PortStatFieldsX10;
         extern s32 g_PortStatFieldsPerTickX100;
@@ -1204,12 +1207,12 @@ static void portAudioLogLine(u32 now)
          * needs one answer; this file is read by someone chasing a defect, so it
          * carries the exact sample counts as well. */
         fprintf(s_LogFile,
-                "t=%ums FPS %d TPS %d tk %d f/s %d.%d f/t %d.%02d "
+                "t=%ums FPS %d tk %d f/s %d.%d f/t %d.%02d "
                 "pmp %u/s rnd %u/s"
                 " que %u/%uB %u/%ums cap %uB"
                 " snd %u/%usmp %u/%ums"
                 " dry %u over %u skip %u frc %u stall %d clk %dms dev %uHz\n",
-                now - s_LogStart, (int) g_PortStatFps, (int) g_PortStatTps,
+                now - s_LogStart, (int) g_PortStatFps,
                 (int) g_PortStatTicks,
                 (int) (g_PortStatFieldsX10 / 10), (int) (g_PortStatFieldsX10 % 10),
                 (int) (g_PortStatFieldsPerTickX100 / 100),
@@ -1526,10 +1529,10 @@ void portAudioPump(void)
             s_StatWinForced = 0;
         }
         s_StatWinPumps++;
-        /* portAudioPump is called every scheduler iteration, not once per
-         * drawn frame, and most calls find the queue already at target and
-         * render nothing. Counting the ones that did is what makes the call
-         * rate interpretable instead of just large. */
+        /* portAudioPump runs once per message-queue pass, and those passes are
+         * far more frequent than drawn frames; most calls find the queue
+         * already at target and render nothing. Counting the ones that did is
+         * what makes the call rate interpretable instead of just large. */
         if (rendered != 0) {
             s_StatWinBusy++;
         }

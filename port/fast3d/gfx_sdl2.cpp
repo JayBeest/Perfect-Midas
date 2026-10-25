@@ -859,13 +859,13 @@ static void gfx_sdl_maybe_screenshot(void) {
  * exposes a sim losing time under `tickhz=hw`. See
  * docs/port/tick-and-field-accounting.md.
  *
- * The numbers exist to separate failure modes that all read "60 fps | 60 tps"
+ * The numbers exist to separate failure modes that all read "60 fps | 60 tk"
  * from the outside:
  *   tick 60          -> GE_TICKHZ never reached the process
  *   tick 120 pump 60 -> the pacer isn't honouring subdiv (GE_NOSLEEP?)
  *   tick 120 pump120, fps 60 -> the blocking swap / gfx backpressure is
  *                               pinning the loop (vsync=1 on a 60Hz panel)
- *   tick 120 pump120, fps120 tps 60, f/s 60, f/t 0.50 -> working as designed
+ *   tick 120 pump120, fps120 f/s 60, f/t 0.50 -> working as designed
  *   f/s below 60 -> the sim is losing wall-clock time: a stall the credit path
  *                   truncated (GE_TICKMAXSTEP), never a frame-rate symptom */
 extern "C" int32_t g_GlobalTickCount;
@@ -1014,7 +1014,8 @@ static void gfx_sdl_update_title_stats(void) {
                      joyms10 / 10, joyms10 % 10, audms10 / 10, audms10 % 10, draws, rnhz);
         /* Title-bar stats are opt-in (GE_TITLESTATS=1) to keep the title clean
          * for recording. The numbers still feed the in-game
-         * show_fps overlay via g_PortStatFps/Tps above. */
+         * show_fps digits and the cl_audio_pump block via the g_PortStat*
+         * globals above. */
         {
             static int title_stats = -1;
             if (title_stats < 0) { const char *e = SDL_getenv("GE_TITLESTATS"); title_stats = (e && *e && *e != '0') ? 1 : 0; }
