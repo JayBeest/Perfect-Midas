@@ -13,6 +13,7 @@
 #include <ultra64.h>
 #include "port_options.h"
 #include "boot_flags.h"   /* the -n64_aa / -audio_pump / -audio_log parse */
+#include "classic_split.h" /* the one-time n64_aa -> classic_mode migration */
 #include "video_env.h"     /* the env overrides that can contradict a mode */
 
 #ifdef GE_XBOX
@@ -222,8 +223,17 @@ static int s_CfgXboxXluRetained = 1;  /* [display] xbox_xlu_retained: 0 = XLU tr
 extern uint32_t gfx_xbox_xlu_retained; /* gfx_pc.cpp */
 static int s_CfgXboxXluPlanar = 1;    /* [display] xbox_xlu_planar_units: 0 = retained XLU triangles are one sorter unit each (bisect) */
 extern uint32_t gfx_xbox_xlu_planar_units; /* gfx_pc.cpp */
-static int s_CfgN64Aa = 0;            /* [display] n64_aa: the level frame resolved the way the N64's VI
-                                       * filtered it (needs MSAA: forces at least 4x while on) - gfx_n64_aa */
+static int s_CfgN64Aa = 0;            /* [display] n64_aa: the VI AA bit ONLY - the level frame
+                                       * resolved the way the N64's VI filtered it (needs MSAA:
+                                       * floors it at 4x while on) - gfx_n64_aa. The Classic Mode
+                                       * PRESET is [display] classic_mode, the next static. */
+static int s_CfgClassicMode = 0;      /* [display] classic_mode: the Classic Mode PRESET is on.
+                                       * Owns the seven forced values (port_options.c
+                                       * sClassicKeys), the pillars, the hitches, the composite
+                                       * filter, and every "is the mode on" question. Its
+                                       * classic_n64aa part is the ONLY link to the AA bit above
+                                       * (portClassicSetsN64Aa): the preset sets the bit on entry
+                                       * and clears it on exit, and nothing else couples them. */
 extern uint32_t gfx_n64_aa;           /* gfx_pc.cpp */
 extern void gfx_set_aa(uint32_t msaa_level, uint32_t n64_aa); /* gfx_pc.cpp: latched for the render thread's next frame when it runs */
 static int videoClassicViOn(void); /* with the Classic parts table below */
@@ -1120,6 +1130,12 @@ static int videoSetDisplayOption(const char *key, const char *value)
     if (SDL_strcasecmp(key, "mipmaps") == 0
         || SDL_strcasecmp(key, "hw_mipmaps") == 0) { s_CfgMipmaps = SDL_atoi(value) != 0; return 1; }
     if (SDL_strcasecmp(key, "n64_aa") == 0)        { s_CfgN64Aa = SDL_atoi(value) != 0; return 1; }
+    if (SDL_strcasecmp(key, "classic_mode") == 0)  { s_CfgClassicMode = SDL_atoi(value) != 0; return 1; }
+    /* the one-time n64_aa -> classic_mode split marker: what it MEANS is
+     * classic_split.h's decision, and videoLoadConfig is the only reader. It is
+     * recognised here so an already-migrated file is not reported as an
+     * unknown control on every boot. */
+    if (SDL_strcasecmp(key, "classic_split") == 0) { return 1; }
     if (SDL_strcasecmp(key, "room_cache") == 0)    { s_CfgRoomCache = SDL_atoi(value); if (s_CfgRoomCache < 0 || s_CfgRoomCache > 2) s_CfgRoomCache = 0; if (s_CfgRoomCache == 0) { s_RoomCacheBeforeHw = 0; /* room_cache: an explicit 0 is not put back */ } if (s_CfgTickHz == -1 && s_CfgRoomCache != 0) { portConLogf("ge: video: tickhz=hw - room_cache forced 0\n"); s_RoomCacheBeforeHw = s_CfgRoomCache; s_CfgRoomCache = 0; } portRoomCacheSetMode(s_CfgRoomCache); return 1; }
 #ifdef GE_XBOX
     if (SDL_strcasecmp(key, "xbox_mode") == 0)
@@ -1482,6 +1498,7 @@ s32 portVideoOptionGet(const char *key, s32 *out)
     if (SDL_strcasecmp(key, "mipmaps") == 0
         || SDL_strcasecmp(key, "hw_mipmaps") == 0)    { *out = s_CfgMipmaps;      return 1; }
     if (SDL_strcasecmp(key, "n64_aa") == 0)        { *out = s_CfgN64Aa;        return 1; }
+    if (SDL_strcasecmp(key, "classic_mode") == 0)  { *out = s_CfgClassicMode;   return 1; }
     /* the CHOSEN sample count, not the effective one: n64_aa floors it at 4x
      * (videoApplyAa) and a row that silently showed 4 after you picked 2
      * would look broken. The n64 aa row above it says it needs MSAA. */
@@ -2314,6 +2331,7 @@ static void videoWriteDefaultIni(void)
     fprintf(f, "filter_2d=%d\n", s_CfgFilter2D);
     fprintf(f, "low_res=%d\n", s_CfgLowRes);
     fprintf(f, "n64_aa=%d\n", s_CfgN64Aa ? 1 : 0);
+    fprintf(f, "classic_mode=%d\n", s_CfgClassicMode ? 1 : 0);
     fprintf(f, "room_cache=%d\n", s_CfgRoomCache);
     fprintf(f, "tri_hoist=%d\n", s_CfgTriHoist ? 1 : 0);
     fprintf(f, "fix_shootthrough=%d\n", s_CfgFixShootThrough);
@@ -3232,6 +3250,11 @@ static void videoLoadConfig(void)
     int moveUpgraded = 0; /* the binds carry VIDEO_MOVE_UPGRADE_KEY */
     int iniHadBinds = 0;  /* midas.ini still has bind lines (an older file) */
     int recBinds;         /* the keyboard's record had a [binds] section */
+    /* the one-time n64_aa -> classic_mode split (classic_split.h): what THIS
+     * FILE carried. Set while parsing, because only a file can answer them - a
+     * live set of the same key must not look like a written line. */
+    int iniHadClassicMode = 0;
+    int iniHadSplitMarker = 0;
 
     videoBindCountCheck();
     SDL_memset(sPortBindSeen, 0, sizeof(sPortBindSeen));
@@ -3316,8 +3339,53 @@ static void videoLoadConfig(void)
                 s_CfgTickAsWritten = videoTickTextValue(val);
             }
         }
+        /* The presence of these two, and of the marker the split writes, is what
+         * decides whether the migration below runs. Recorded here and not in a
+         * setter for the reason the tickhz note above gives: only the FILE may
+         * answer "did this one already go through the split?". */
+        if (SDL_strcasecmp(key, "classic_mode") == 0)
+        {
+            iniHadClassicMode = 1;
+        }
+        else if (SDL_strcasecmp(key, "classic_split") == 0)
+        {
+            iniHadSplitMarker = 1;
+        }
     }
     fclose(f);
+
+    { /* The one-time n64_aa -> classic_mode split, once per file. An old
+       * `n64_aa=1` meant BOTH "Classic Mode is on" and "the AA bit is set", so
+       * it becomes both keys; the mapping and its guard are classic_split.c's.
+       * The marker lands in the same write, so this cannot run twice - and a
+       * player who later turns the preset off must not have it switched back on
+       * by a migration that thought it knew better. A no-ini start never
+       * reaches here: videoWriteDefaultIni already emits both keys. */
+        PortClassicSplitIn in;
+        PortClassicSplitOut out;
+
+        in.n64_aa = s_CfgN64Aa;
+        in.classic_mode = s_CfgClassicMode;
+        in.had_classic_mode = iniHadClassicMode;
+        in.had_split_marker = iniHadSplitMarker;
+        portClassicSplit(&in, &out);
+        s_CfgClassicMode = out.classic_mode;
+        if (out.migrate)
+        {
+            char bit[8];
+            char mode[8];
+            const char *keys[2] = { "classic_mode", "classic_split" };
+            const char *vals[2] = { mode, "1" };
+
+            SDL_snprintf(bit, sizeof(bit), "%d", s_CfgN64Aa ? 1 : 0);
+            SDL_snprintf(mode, sizeof(mode), "%d", s_CfgClassicMode ? 1 : 0);
+            if (portIniWriteStrs("[display]", keys, vals, 2))
+            {
+                portConLogf("ge: midas.ini: n64_aa split - classic_mode=%s (the preset) beside "
+                            "n64_aa=%s (the AA bit)\n", mode, bit);
+            }
+        }
+    }
 
     /* The keyboard's record wins over any old [controls] lines; a record
      * without binds takes them over, once, and midas.ini drops the section. */

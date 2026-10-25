@@ -139,6 +139,47 @@ cp "$VE" "$W/mut.c"
 run_ve "video_env" survive
 
 echo
+echo "the n64_aa -> classic_mode split (port/src/classic_split.c)"
+CS="$ROOT/port/src/classic_split.c"
+TCS="$ROOT/port/tests/classic_split.c"
+MUT_SRC="$CS"
+run_cs() {
+    local label="$1" want="$2"
+    cc $CC_BASE "$TCS" "$W/mut.c" -o "$W/t" 2>"$W/cc.log" || { printf '  NOBUILD  %s\n' "$label"; status=1; return; }
+    if "$W/t" >/dev/null 2>&1; then
+        if [ "$want" = "survive" ]; then printf '  ok       %-50s survives (expected)\n' "$label";
+        else printf '  GAP      %-50s SURVIVED - no test kills this\n' "$label"; status=1; fi
+    else
+        if [ "$want" = "kill" ]; then printf '  ok       %-50s killed\n' "$label";
+        else printf '  BROKEN   %-50s the baseline itself fails\n' "$label"; status=1; fi
+    fi
+}
+cs_mutate() {
+    cp "$CS" "$W/mut.c"
+    perl -0pi -e "$1" "$W/mut.c"
+    if cmp -s "$CS" "$W/mut.c"; then printf '  NO-OP    %s\n' "$2"; status=1; return 1; fi
+}
+# The marker is the whole point of the guard: without it the migration runs on
+# every boot and a deliberate classic_mode=0 is resurrected.
+cs_mutate 's/!in->had_classic_mode && !in->had_split_marker/!in->had_classic_mode/' "split: ignore the marker" && \
+    run_cs "migration re-runs on a migrated file" kill
+# classic_mode on its own must also stop it: a file that names the preset has
+# already been split, whatever n64_aa says.
+cs_mutate 's/!in->had_classic_mode && !in->had_split_marker/!in->had_split_marker/' "split: ignore classic_mode" && \
+    run_cs "migration overwrites an explicit classic_mode" kill
+# The mapping itself. A split that leaves the preset off upgrades a classic
+# player into a half-state - the audit's defect, reintroduced by its own fix.
+cs_mutate 's/out->classic_mode = out->migrate \? \(in->n64_aa != 0\) : \(in->classic_mode != 0\);/out->classic_mode = 0;/' "split: never migrate the preset" && \
+    run_cs "old n64_aa=1 does not turn the preset on" kill
+cs_mutate 's/out->classic_mode = out->migrate \? \(in->n64_aa != 0\) : \(in->classic_mode != 0\);/out->classic_mode = out->migrate ? 1 : (in->classic_mode != 0);/' "split: always migrate it on" && \
+    run_cs "old n64_aa=0 still turns the preset on" kill
+# A file with classic_mode already set keeps ITS value, not the bit's.
+cs_mutate 's/out->classic_mode = out->migrate \? \(in->n64_aa != 0\) : \(in->classic_mode != 0\);/out->classic_mode = (in->n64_aa != 0);/' "split: derive from the bit" && \
+    run_cs "classic_mode=1 n64_aa=0 loses the preset" kill
+cp "$CS" "$W/mut.c"
+run_cs "classic_split" survive
+
+echo
 echo "the seam (port/src/port_options.c)"
 MUT_SRC="$PO"
 mutate "$PO" 's/strcmp\(key, "n64_aa"\) == 0/strncmp(key, "classic_", 8) == 0/' "choke: wrong key test" && \
@@ -173,6 +214,9 @@ fi
 cc $CC_BASE "$TP" "$TF" "$PO" "$CM" -o "$W/b2" 2>/dev/null && "$W/b2" >/dev/null 2>&1 && \
     printf '  ok       %-50s passes unmutated\n' "port_options_n64aa" || {
     printf '  BROKEN   the unmutated seam test fails\n'; status=1; }
+cc $CC_BASE "$TCS" "$CS" -o "$W/b3" 2>/dev/null && "$W/b3" >/dev/null 2>&1 && \
+    printf '  ok       %-50s passes unmutated\n' "classic_split" || {
+    printf '  BROKEN   the unmutated split test fails\n'; status=1; }
 
 echo
 if [ "$status" -eq 0 ]; then

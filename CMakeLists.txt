@@ -576,6 +576,12 @@ if(GE_PORT_TESTS)
     add_executable(video_env_test port/tests/video_env.c port/src/video_env.c)
     add_test(NAME video_env COMMAND video_env_test)
 
+    # The one-time n64_aa -> classic_mode split: the mapping and the once-only
+    # guard, as a pure rule. It rewrites the player's real midas.ini, so the
+    # "runs once, then never again" half is worth proving without a launch.
+    add_executable(classic_split_test port/tests/classic_split.c port/src/classic_split.c)
+    add_test(NAME classic_split COMMAND classic_split_test)
+
     # ...and that the SETTER actually calls the rule. The audit's console defect
     # was a missing call at that seam, which no test of the rule can see. This
     # links the shipped port_options.c against a fake option table, so the real
