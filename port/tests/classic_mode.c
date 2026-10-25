@@ -188,6 +188,165 @@ static void toggle_on_snapshots_even_when_already_classic(void)
     CHECK(p.write_n == 0);
 }
 
+/* The op and mode_on can disagree only if a caller is confused, and then the
+ * answer must be "do not remember": a TOGGLE_ON that is not entering the mode
+ * would overwrite the player's snapshot with the forced values. This mutant
+ * (dropping `&& in->mode_on`) survived the first version of this test. */
+static void toggle_on_with_mode_off_does_not_snapshot(void)
+{
+    int parts[NCLASSIC];
+    ClassicPlan p;
+    int i;
+
+    allOn(parts);
+    plan(CLASSIC_OP_TOGGLE_ON, 0, parts, sMine, NULL, 0, &p);
+    CHECK(p.snapshot == 0);
+    CHECK(p.saved_n == 0);
+    /* mode_on is 0, so it restores rather than forces; with no saved values
+     * there is nothing to restore. */
+    CHECK(p.write_n == 0);
+
+    /* With a snapshot present, the restore path applies and the snapshot is
+     * still not retaken. */
+    plan(CLASSIC_OP_TOGGLE_ON, 0, parts, sClassic, sMine, NCLASSIC, &p);
+    CHECK(p.snapshot == 0);
+    CHECK(p.write_n == NCLASSIC);
+    for (i = 0; i < NCLASSIC; i++) {
+        CHECK(written(&p, i) == sMine[i]);
+    }
+}
+
+/* FIX never snapshots, in either direction - asserted for the OFF direction
+ * too, which the first version only did for ON. */
+static void fix_never_snapshots_in_either_direction(void)
+{
+    int parts[NCLASSIC];
+    int saved[NCLASSIC];
+    ClassicPlan p;
+
+    allOn(parts);
+    plan(CLASSIC_OP_FIX, 0, parts, sClassic, sMine, NCLASSIC, &p);
+    CHECK(p.snapshot == 0);
+
+    plan(CLASSIC_OP_FIX, 1, parts, sMine, saved, NCLASSIC, &p);
+    CHECK(p.snapshot == 0);
+}
+
+/* A reused ClassicPlan must not carry state over. Without the memset in
+ * portClassicPlan a second call into the same struct keeps the first call's
+ * snapshot flag, and the applier writes a stale snapshot over classic_saved -
+ * the player-value-destroying bug this whole rule exists to prevent. */
+static void plan_reuse_clears_previous_state(void)
+{
+    int parts[NCLASSIC];
+    ClassicPlan p;
+
+    allOn(parts);
+    plan(CLASSIC_OP_TOGGLE_ON, 1, parts, sMine, NULL, 0, &p);
+    CHECK(p.snapshot == 1);
+    CHECK(p.write_n == NCLASSIC);
+
+    /* A FIX into the SAME struct must not inherit either field. */
+    plan(CLASSIC_OP_FIX, 0, parts, sClassic, sMine, NCLASSIC, &p);
+    CHECK(p.snapshot == 0);
+    CHECK(p.saved_n == 0);
+
+    plan(CLASSIC_OP_FIX, 1, parts, sClassic, NULL, 0, &p);
+    CHECK(p.write_n == 0);
+}
+
+/* A NULL field array with n > 0 must be refused, not dereferenced. Each of the
+ * three NULL checks is removed one at a time by the mutation audit; all three
+ * need a case. */
+static void null_fields_are_refused(void)
+{
+    ClassicInput in;
+    ClassicPlan p;
+    int parts[NCLASSIC];
+    int cur[NCLASSIC];
+
+    allOn(parts);
+    in.op = CLASSIC_OP_TOGGLE_ON;
+    in.mode_on = 1;
+    in.saved = NULL;
+    in.saved_n = 0;
+    in.classic = sClassic;
+    in.current = cur;
+    in.parts_on = parts;
+    in.n = NCLASSIC;
+
+    in.parts_on = NULL;
+    portClassicPlan(&in, &p);
+    CHECK(p.write_n == 0);
+    CHECK(p.snapshot == 0);
+
+    in.parts_on = parts;
+    in.classic = NULL;
+    portClassicPlan(&in, &p);
+    CHECK(p.write_n == 0);
+    CHECK(p.snapshot == 0);
+
+    in.classic = sClassic;
+    in.current = NULL;
+    portClassicPlan(&in, &p);
+    CHECK(p.write_n == 0);
+    CHECK(p.snapshot == 0);
+}
+
+/* The buffer bound, not just the n bound: saved_n past CLASSIC_MODE_MAX must not
+ * walk the plan's fixed arrays. */
+static void saved_n_beyond_the_buffer_is_clamped(void)
+{
+    ClassicInput in;
+    ClassicPlan p;
+    int parts[NCLASSIC];
+    int cur[NCLASSIC];
+    int i;
+
+    allOn(parts);
+    for (i = 0; i < NCLASSIC; i++) {
+        cur[i] = sClassic[i];
+    }
+    in.op = CLASSIC_OP_TOGGLE_OFF;
+    in.mode_on = 0;
+    in.parts_on = parts;
+    in.classic = sClassic;
+    in.current = cur;
+    in.saved = sMine;
+    in.saved_n = CLASSIC_MODE_MAX + 8;   /* past the buffer AND past n */
+    in.n = NCLASSIC;
+    portClassicPlan(&in, &p);
+    CHECK(p.write_n == NCLASSIC);
+}
+
+/* n longer than the buffer must be clamped too, or the loops run off the end. */
+static void n_beyond_the_buffer_is_clamped(void)
+{
+    ClassicInput in;
+    ClassicPlan p;
+    int parts[CLASSIC_MODE_MAX];
+    int cur[CLASSIC_MODE_MAX];
+    int cls[CLASSIC_MODE_MAX];
+    int i;
+
+    for (i = 0; i < CLASSIC_MODE_MAX; i++) {
+        parts[i] = 1;
+        cur[i] = sMine[i % NCLASSIC];
+        cls[i] = sClassic[i % NCLASSIC];
+    }
+    in.op = CLASSIC_OP_TOGGLE_ON;
+    in.mode_on = 1;
+    in.parts_on = parts;
+    in.classic = cls;
+    in.current = cur;
+    in.saved = NULL;
+    in.saved_n = 0;
+    in.n = CLASSIC_MODE_MAX + 64;
+    portClassicPlan(&in, &p);
+    CHECK(p.saved_n == CLASSIC_MODE_MAX);
+    CHECK(p.write_n == CLASSIC_MODE_MAX);
+}
+
 static void toggle_on_respects_disabled_parts(void)
 {
     int parts[NCLASSIC];
@@ -337,12 +496,20 @@ static void degenerate_counts_are_safe(void)
     CHECK(p.snapshot == 0);                  /* no parts: nothing to remember */
 
     /* NULL inputs must not crash: the module is called from surfaces whose
-     * tables can be absent in a stripped build. */
+     * tables can be absent in a stripped build. Scribble over `p` first, so this
+     * proves the call CLEARED it rather than that it was already clear. */
+    p.snapshot = 1;
+    p.saved_n = 99;
+    p.write_n = 99;
     portClassicPlan(NULL, &p);
     CHECK(p.write_n == 0);
     CHECK(p.snapshot == 0);
+    CHECK(p.saved_n == 0);
 
     CHECK(portClassicMismatch(NULL, sClassic, sMine, NCLASSIC, idx) == 0);
+    /* idx_out is optional - the console and the boot report both count first and
+     * name second - so a NULL buffer must count without writing. */
+    CHECK(portClassicMismatch(parts, sClassic, sMine, NCLASSIC, NULL) == NCLASSIC);
     CHECK(portClassicMismatch(parts, sClassic, sMine, 0, idx) == 0);
 
     /* saved_n longer than n cannot walk off the end of the arrays. */
@@ -382,6 +549,12 @@ int main(void)
 
     toggle_on_snapshots_then_forces();
     toggle_on_snapshots_even_when_already_classic();
+    toggle_on_with_mode_off_does_not_snapshot();
+    fix_never_snapshots_in_either_direction();
+    plan_reuse_clears_previous_state();
+    null_fields_are_refused();
+    saved_n_beyond_the_buffer_is_clamped();
+    n_beyond_the_buffer_is_clamped();
     toggle_on_respects_disabled_parts();
 
     toggle_off_restores();

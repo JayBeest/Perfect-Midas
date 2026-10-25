@@ -1,22 +1,24 @@
 /*
- * Setting Classic Mode by text runs the preset.
+ * Classic Mode through the option table's seam.
  *
  * port/tests/classic_mode.c pins the RULE (what a transition writes). This file
- * pins the WIRING: that portOptSetIni - the setter the console and the Gameplay
- * Options page both come through - actually calls it. The bug in
- * docs/port/settings-and-save-audit.md was exactly a missing call at that seam,
- * and no test of the rule can see it: the rule was right the whole time.
+ * pins the WIRING: that the shipped port_options.c applies the rule when n64_aa
+ * changes, from every setter, exactly once, in the right order.
  *
- * It links the shipped port_options.c against a fake option table, so the real
- * sOpts rows, the real portOptFind, the real optSet path and the real
- * portClassicSetLive all run. Only the six bridges out of the file are faked:
- * the [display] and [input] getters/setters, the classic part mask, the
- * classic_saved slot, and the ini writer (which only counts).
+ * That seam is where the defects have been. The console bug was a missing call
+ * (the rule was right the whole time), and the Phase 2 rewrite could reintroduce
+ * it from the other side: a leftover explicit apply in portClassicToggle would
+ * run the transition twice, leave the same VALUES, and silently replace the
+ * player's snapshot with the forced one.
+ *
+ * So most of these cases assert WORK, not values: how many saves, how many
+ * snapshots, and in what order the writes landed. See port_options_fake.h.
  *
  * WHAT THIS CANNOT TELL YOU
  *
- * That the player sees the right thing. The menu, the watch and the sheet each
- * render their own view of these values; this asserts the values themselves.
+ * That the player sees the right thing. Tab, the watch and the folder sheet each
+ * render their own view and have no headless harness; what is asserted here is
+ * the state they would all be reading.
  */
 
 #include <stdarg.h>
@@ -26,397 +28,365 @@
 
 #include <ultra64.h>
 #include "port_options.h"
+#include "port_options_fake.h"
 
 #define CHECK(expr) do { if (!(expr)) { \
     fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #expr); abort(); } } while (0)
 
-/* Declared by port_options.c and used by the menus; not in the public header
- * because no other translation unit needs them. The test does. */
+/* Declared by port_options.c and used by the menus; not in the public header. */
 s32 portOptFind(const char *key);
 s32 portOptSetValue(s32 i, s32 v);
-
-/* ---- the fake world ----------------------------------------------------- */
-
-enum {
-    F_N64AA = 0, F_LOWRES, F_FILTERING, F_ANISO, F_MAXFPS, F_MSAA, F_MIPMAPS, F_FILTER2D,
-    F_HUDSCALE,
-    F_COUNT
-};
-
-static const char *const sFakeKeys[F_COUNT] = {
-    "n64_aa", "low_res", "filtering", "anisotropy", "maxfps", "msaa", "mipmaps", "filter_2d",
-    "hud_scale"
-};
-
-static int sVal[F_COUNT];
-static int sParts[8];              /* the CLASSIC sheet's rows */
-static int sSaved[8];
-static int sSavedN;
-static int sIniWrites;
+const char *portOptKey(s32 i);
+void portClassicToggle(void);
 
 #define NCLASSIC 7
-
-/* The value each classic part forces, in portClassicKey() order - the same
- * numbers port_options.c's sClassicVals holds, restated here so the assertions
- * read as values rather than as indices. */
-static const int sClassicVal[NCLASSIC] = { 240, 2, 8, -1, 2, 1, 1 };
-/* What the player had before entering the mode. */
+static const int sClassic[NCLASSIC] = { 240, 2, 8, -1, 2, 1, 1 };
 static const int sMine[NCLASSIC] = { 480, 1, 2, 60, 4, 0, 0 };
-
-static int fakeIndex(const char *key)
-{
-    int i;
-
-    for (i = 0; i < F_COUNT; i++) {
-        if (strcmp(sFakeKeys[i], key) == 0) {
-            return i;
-        }
-    }
-    return -1;
-}
-
-/* ---- the six bridges port_options.c expects ---------------------------- */
-
-s32 portVideoOptionGet(const char *key, s32 *out)
-{
-    const int i = fakeIndex(key);
-
-    if (i < 0) {
-        return 0;
-    }
-    *out = sVal[i];
-    return 1;
-}
-
-s32 portVideoOptionSet(const char *key, s32 value)
-{
-    const int i = fakeIndex(key);
-
-    if (i < 0) {
-        return 0;
-    }
-    sVal[i] = (int) value;
-    return 1;
-}
-
-s32 portInputOptionGet(const char *key, s32 *out)
-{
-    (void) key; (void) out;
-    return 0;
-}
-
-s32 portInputOptionSet(const char *key, s32 value)
-{
-    (void) key; (void) value;
-    return 0;
-}
-
-s32 portJoyPortOptionGet(const char *key, s32 *out)
-{
-    (void) key; (void) out;
-    return 0;
-}
-
-s32 portJoyPortOptionSet(const char *key, s32 value)
-{
-    (void) key; (void) value;
-    return 0;
-}
-
-s32 portClassicPart(s32 i)
-{
-    return (i >= 0 && i < 8) ? sParts[i] : 0;
-}
-
-s32 portVideoClassicSavedGet(s32 *v)
-{
-    int i;
-
-    for (i = 0; i < sSavedN; i++) {
-        v[i] = sSaved[i];
-    }
-    return sSavedN;
-}
-
-/* Mirrors video.c's portVideoClassicSavedSet: it always stores
- * CLASSIC_SAVED_MAX (7) fields, which is why the real caller passes an array of
- * that size regardless of what the plan asked for. */
-void portVideoClassicSavedSet(const s32 *v)
-{
-    int i;
-
-    for (i = 0; i < NCLASSIC; i++) {
-        sSaved[i] = v[i];
-    }
-    sSavedN = NCLASSIC;
-}
-
-/* Only counted: the ini's contents are port/tests/classic_mode.c's subject and
- * the live harnesses' - what matters here is that a write happened at all. */
-s32 portIniWriteStrs(const char *section, const char *const *keys, const char *const *vals, s32 n)
-{
-    (void) section; (void) keys; (void) vals; (void) n;
-    sIniWrites++;
-    return 1;
-}
-
-/* include/PR/os.h does `#define sprintf portSprintf`. */
-int portSprintf(char *buf, const char *fmt, ...)
-{
-    va_list ap;
-    int n;
-
-    va_start(ap, fmt);
-    n = vsnprintf(buf, 1024, fmt, ap);
-    va_end(ap);
-    return n;
-}
-
-/* ---- setup ------------------------------------------------------------- */
-
-/* The player's own values, mode off, nothing remembered. */
-static void world_off_own(void)
-{
-    int i;
-
-    memset(sVal, 0, sizeof(sVal));
-    memset(sSaved, 0, sizeof(sSaved));
-    sSavedN = 0;
-    sIniWrites = 0;
-    for (i = 0; i < 8; i++) {
-        sParts[i] = 1;              /* every part enabled: Classic Mode as shipped */
-    }
-    sVal[F_N64AA] = 0;
-    sVal[F_LOWRES] = sMine[0];
-    sVal[F_FILTERING] = sMine[1];
-    sVal[F_ANISO] = sMine[2];
-    sVal[F_MAXFPS] = sMine[3];
-    sVal[F_MSAA] = sMine[4];
-    sVal[F_MIPMAPS] = sMine[5];
-    sVal[F_FILTER2D] = sMine[6];
-    sVal[F_HUDSCALE] = 1;
-}
-
-/* Classic Mode on, its values in force, the originals remembered. */
-static void world_on_classic(void)
-{
-    int i;
-
-    world_off_own();
-    sVal[F_N64AA] = 1;
-    sVal[F_LOWRES] = sClassicVal[0];
-    sVal[F_FILTERING] = sClassicVal[1];
-    sVal[F_ANISO] = sClassicVal[2];
-    sVal[F_MAXFPS] = sClassicVal[3];
-    sVal[F_MSAA] = sClassicVal[4];
-    sVal[F_MIPMAPS] = sClassicVal[5];
-    sVal[F_FILTER2D] = sClassicVal[6];
-    for (i = 0; i < NCLASSIC; i++) {
-        sSaved[i] = sMine[i];
-    }
-    sSavedN = NCLASSIC;
-}
-
-static int set_text(const char *key, const char *text)
-{
-    const s32 i = portOptFind(key);
-
-    CHECK(i >= 0);
-    return portOptSetIni(i, text);
-}
+static const char *const sClassicKeys[NCLASSIC] = {
+    "low_res", "filtering", "anisotropy", "maxfps", "msaa", "mipmaps", "filter_2d"
+};
 
 static void expect_classic_forced(void)
 {
-    CHECK(sVal[F_N64AA] == 1);
-    CHECK(sVal[F_LOWRES] == sClassicVal[0]);
-    CHECK(sVal[F_FILTERING] == sClassicVal[1]);
-    CHECK(sVal[F_ANISO] == sClassicVal[2]);
-    CHECK(sVal[F_MAXFPS] == sClassicVal[3]);
-    CHECK(sVal[F_MSAA] == sClassicVal[4]);
-    CHECK(sVal[F_MIPMAPS] == sClassicVal[5]);
-    CHECK(sVal[F_FILTER2D] == sClassicVal[6]);
+    int i;
+
+    CHECK(fakeGet("n64_aa") == 1);
+    for (i = 0; i < NCLASSIC; i++) {
+        CHECK(fakeGet(sClassicKeys[i]) == sClassic[i]);
+    }
 }
 
 static void expect_mine(void)
 {
-    CHECK(sVal[F_LOWRES] == sMine[0]);
-    CHECK(sVal[F_FILTERING] == sMine[1]);
-    CHECK(sVal[F_ANISO] == sMine[2]);
-    CHECK(sVal[F_MAXFPS] == sMine[3]);
-    CHECK(sVal[F_MSAA] == sMine[4]);
-    CHECK(sVal[F_MIPMAPS] == sMine[5]);
-    CHECK(sVal[F_FILTER2D] == sMine[6]);
+    int i;
+
+    for (i = 0; i < NCLASSIC; i++) {
+        CHECK(fakeGet(sClassicKeys[i]) == sMine[i]);
+    }
 }
 
-/* ---- the cases --------------------------------------------------------- */
+static void expect_snapshot_is_mine(void)
+{
+    int i;
 
-/* The defect: `cl_n64_aa 1` wrote the flag and forced nothing. */
+    CHECK(fakeSavedN() == NCLASSIC);
+    for (i = 0; i < NCLASSIC; i++) {
+        CHECK(fakeSaved(i) == sMine[i]);
+    }
+}
+
+static void set_text(const char *key, const char *text)
+{
+    const s32 i = portOptFind(key);
+
+    CHECK(i >= 0);
+    CHECK(portOptSetIni(i, text) == 1);
+}
+
+/* ---- the table itself -------------------------------------------------- */
+
+/* n64_aa is NOT the first row. An implementation that special-cased index 0
+ * would pass a fake whose tables started there and fail in the game. */
+static void n64_aa_is_not_row_zero(void)
+{
+    CHECK(portOptFind("n64_aa") > 0);
+    CHECK(strcmp(portOptKey(portOptFind("n64_aa")), "n64_aa") == 0);
+}
+
+/* ---- entering, by text ------------------------------------------------- */
+
 static void text_on_forces_and_snapshots(void)
 {
-    int i;
-
-    world_off_own();
-    CHECK(set_text("n64_aa", "1") == 1);
+    fakeReset();
+    set_text("n64_aa", "1");
 
     expect_classic_forced();
-    CHECK(sSavedN == NCLASSIC);
-    for (i = 0; i < NCLASSIC; i++) {
-        CHECK(sSaved[i] == sMine[i]);   /* the player's values, not the forced ones */
-    }
-    CHECK(sIniWrites > 0);
+    expect_snapshot_is_mine();
 }
 
-/* The other direction: `cl_n64_aa 0` left all seven forced with the mode off. */
-static void text_off_restores(void)
+/* Every spelling the parser accepts must run the preset. A guard written
+ * against the TEXT ("0" only) rather than the VALUE passes a test that only
+ * tries "1" and "0". */
+static void all_true_spellings_transition(void)
 {
-    world_on_classic();
-    CHECK(set_text("n64_aa", "0") == 1);
+    static const char *const yes[] = { "1", "on", "true", "yes" };
+    static const char *const no[] = { "0", "off", "false", "no" };
+    int i;
 
-    CHECK(sVal[F_N64AA] == 0);
+    for (i = 0; i < 4; i++) {
+        fakeReset();
+        set_text("n64_aa", yes[i]);
+        expect_classic_forced();
+        expect_snapshot_is_mine();
+
+        fakeClassicOn();
+        set_text("n64_aa", no[i]);
+        CHECK(fakeGet("n64_aa") == 0);
+        expect_mine();
+    }
+}
+
+/* A value the toggle cannot take is refused, and a refusal must not run the
+ * preset: forcing values with the flag unchanged is the audit's half-state,
+ * produced by the fix itself. */
+static void refused_set_does_not_transition(void)
+{
+    const s32 aa = portOptFind("n64_aa");
+
+    fakeReset();
+    CHECK(portOptSetIni(aa, "2") == 0);      /* a TOGGLE takes only on/off */
+
+    CHECK(fakeGet("n64_aa") == 0);
     expect_mine();
-    CHECK(sIniWrites > 0);
+    CHECK(fakeSnapshotCalls() == 0);
 }
 
-/* THE regression case. Setting the mode to the value it already has must not
- * re-enter it: entering overwrites classic_saved with the forced values, and the
- * player's originals would be gone for good. */
-static void repeated_on_does_not_resnapshot(void)
+/* Same when the setter itself refuses (a live key refusing an out-of-range
+ * value). optSet returns 0, portOptSetValue passes that on, and the preset must
+ * not have run - forcing values with the flag unchanged is the audit's
+ * half-state, produced by the fix itself. */
+static void failed_setter_does_not_transition(void)
 {
+    const s32 aa = portOptFind("n64_aa");
+
+    fakeReset();
+    fakeRefuse("n64_aa");
+
+    CHECK(portOptSetValue(aa, 1) == 0);   /* the refusal is reported */
+    CHECK(fakeGet("n64_aa") == 0);        /* and the flag did not move */
+    expect_mine();                        /* nor did anything else */
+    CHECK(fakeSnapshotCalls() == 0);
+}
+
+/* ---- exactly once ------------------------------------------------------ */
+
+/* One transition, one save. portOptSave writes once per non-empty section, and
+ * the table has [display] and [input], so a single save is two writer calls.
+ * A double apply - the leftover-explicit-call bug - is four. */
+static void one_transition_is_one_save(void)
+{
+    fakeReset();
+    fakeIniCallsReset();
+    set_text("n64_aa", "1");
+    CHECK(fakeIniCalls() == 2);
+
+    fakeClassicOn();
+    fakeIniCallsReset();
+    set_text("n64_aa", "0");
+    CHECK(fakeIniCalls() == 2);
+}
+
+/* One transition, one snapshot. This is the assertion a value-only test cannot
+ * make: applying twice ends at the same values but takes the snapshot twice,
+ * and the second one holds the FORCED values. */
+static void one_transition_is_one_snapshot(void)
+{
+    fakeReset();
+    set_text("n64_aa", "1");
+    CHECK(fakeSnapshotCalls() == 1);
+
+    /* And the snapshot it took is the player's, not the mode's. This is the
+     * second half: a double apply would have left 240/2/8/... here. */
+    expect_snapshot_is_mine();
+}
+
+/* A repeated ON is not a transition at all: no snapshot, and (because nothing
+ * differs) no values moved. */
+static void repeated_on_is_not_a_transition(void)
+{
+    fakeReset();
+    set_text("n64_aa", "1");
+    CHECK(fakeSnapshotCalls() == 1);
+
+    set_text("n64_aa", "1");
+    CHECK(fakeSnapshotCalls() == 1);         /* still one */
+    expect_classic_forced();
+    expect_snapshot_is_mine();
+}
+
+/* ---- ordering ---------------------------------------------------------- */
+
+/* The flag must be written BEFORE the values it forces, or a failure between
+ * the two leaves classic values under a mode reported off. The ordered log sees
+ * this; comparing final values cannot. */
+static void flag_is_written_before_the_values(void)
+{
+    const char *key = NULL;
+    int val = 0;
+
+    fakeReset();
+    set_text("n64_aa", "1");
+
+    CHECK(fakeWriteCount() >= 1 + NCLASSIC);
+    CHECK(fakeWriteAt(0, &key, &val) == 1);
+    CHECK(strcmp(key, "n64_aa") == 0);
+    CHECK(val == 1);
+}
+
+/* Nothing may be SAVED before the values have landed: a save first would
+ * persist the old values and the new ones would sit unsaved until the next
+ * change. The save marker in the log is what makes this visible - a count of
+ * saves cannot tell "saved after" from "saved before". */
+static void nothing_is_saved_before_the_values_land(void)
+{
+    const char *key = NULL;
     int i;
 
-    world_on_classic();
-    CHECK(set_text("n64_aa", "1") == 1);
+    fakeReset();
+    set_text("n64_aa", "1");
 
-    CHECK(sSavedN == NCLASSIC);
-    for (i = 0; i < NCLASSIC; i++) {
-        CHECK(sSaved[i] == sMine[i]);   /* still the originals, not 240/2/8/-1/2/1/1 */
+    for (i = 0; i < fakeWriteCount(); i++) {
+        CHECK(fakeWriteAt(i, &key, NULL) == 1);
+        CHECK(strcmp(key, FAKE_SAVE_MARK) != 0);   /* not yet */
+        if (strcmp(key, "filter_2d") == 0) {
+            break;                                  /* last value has landed */
+        }
     }
-    expect_classic_forced();
+    CHECK(fakeIniCalls() > 0);                      /* ...and then it is saved */
+    CHECK(fakeWriteAt(fakeWriteCount() - 1, &key, NULL) == 1);
+    CHECK(strcmp(key, FAKE_SAVE_MARK) == 0);
 }
 
-/* ...and the same from the other side: turning off a mode that is already off
- * must not "restore" a stale snapshot over values the player has since chosen. */
-static void repeated_off_does_not_restore(void)
+/* ---- the other setters ------------------------------------------------- */
+
+/* The toggle is one set now: the choke point applies the mode. Before Phase 2
+ * this test would have to expect an explicit call as well, and a regression
+ * that restored it would double-apply without changing any value. */
+static void toggle_applies_once(void)
 {
-    world_off_own();
-    sSaved[0] = 1111;                  /* a stale snapshot from an earlier cycle */
-    sSavedN = 1;
+    fakeReset();
+    portClassicToggle();
 
-    CHECK(set_text("n64_aa", "0") == 1);
+    CHECK(fakeGet("n64_aa") == 1);
+    expect_classic_forced();
+    CHECK(fakeSnapshotCalls() == 1);
+    expect_snapshot_is_mine();
 
-    CHECK(sVal[F_LOWRES] == sMine[0]);
-    CHECK(sVal[F_LOWRES] != 1111);
+    portClassicToggle();
+    CHECK(fakeGet("n64_aa") == 0);
+    expect_mine();
 }
 
-/* A different key must not trigger the preset. Without this, a careless
- * "does the key mention classic" test would fire on every save. */
 static void other_keys_do_not_transition(void)
 {
-    world_on_classic();
-    sSaved[0] = 4242;                  /* sentinel: untouched proves no re-snapshot */
-    sSavedN = 1;
+    fakeReset();
+    set_text("hud_scale", "0");
 
-    CHECK(set_text("hud_scale", "0") == 1);
-
-    CHECK(sSavedN == 1);
-    CHECK(sSaved[0] == 4242);
-    expect_classic_forced();           /* untouched */
+    CHECK(fakeGet("hud_scale") == 0);
+    CHECK(fakeSnapshotCalls() == 0);
+    expect_mine();
 }
 
-/* A part switched off on the CLASSIC sheet is the player's, not the preset's. */
-static void disabled_part_is_left_alone(void)
+/* An [input] row must still go through the same choke point. A refactor that
+ * special-cased the display bridge would break every controller setting in the
+ * console and leave the display rows perfectly fine. */
+static void input_rows_still_set(void)
 {
-    world_off_own();
-    sParts[2] = 0;                     /* anisotropy */
+    fakeReset();
+    fakeAcceptInput("no_aim_crouch");
 
-    CHECK(set_text("n64_aa", "1") == 1);
-
-    CHECK(sVal[F_LOWRES] == sClassicVal[0]);
-    CHECK(sVal[F_ANISO] == sMine[2]);  /* not forced */
+    CHECK(portOptSetIni(portOptFind("no_aim_crouch"), "1") == 1);
+    CHECK(fakeGet("no_aim_crouch") == 1);
 }
 
-/* portOptSetValue is the toggle's and the watch's setter. Since the choke point
- * (optSet) applies the mode, this MUST transition now: the explicit calls that
- * used to follow it in portClassicToggle, in the watch's rowClassicSync and in
- * the console's cl_classic are gone, and without this the toggle would set the
- * flag and force nothing - the original bug, one layer up.
- *
- * This case asserted the opposite before plan.md Phase 2, when three surfaces
- * each applied the mode themselves and a transition here would have been a
- * double apply. The two assertions are a contract: whichever one is written
- * down, the other must fail. */
-static void set_value_transitions(void)
-{
-    const s32 aa = portOptFind("n64_aa");
-    int i;
+/* ---- the hold ---------------------------------------------------------- */
 
-    world_off_own();
-    CHECK(portOptSetValue(aa, 1) == 1);
-
-    CHECK(sVal[F_N64AA] == 1);
-    expect_classic_forced();
-    CHECK(sSavedN == NCLASSIC);
-    for (i = 0; i < NCLASSIC; i++) {
-        CHECK(sSaved[i] == sMine[i]);
-    }
-}
-
-/* Exactly-once. If the mode were applied twice - once by the choke point and
- * once by a leftover explicit call - the second entry would snapshot the FORCED
- * values over the player's, which is the damage the guard exists to prevent.
- * So: one set, and classic_saved still holds 480/1/2/60/4/0/0. */
-static void one_set_applies_once(void)
-{
-    const s32 aa = portOptFind("n64_aa");
-    int i;
-
-    world_off_own();
-    CHECK(portOptSetValue(aa, 1) == 1);
-
-    for (i = 0; i < NCLASSIC; i++) {
-        CHECK(sSaved[i] == sMine[i]);       /* not sClassicVal */
-        CHECK(sSaved[i] != sClassicVal[i]);
-    }
-
-    /* And a repeated ON through the same setter does not retake it. */
-    CHECK(portOptSetValue(aa, 1) == 1);
-    for (i = 0; i < NCLASSIC; i++) {
-        CHECK(sSaved[i] == sMine[i]);
-    }
-}
-
-/* The hold is the mechanism the VIDEO sheet uses: it lands its own pended
- * values and must not have the choke point apply a mode underneath it. */
 static void the_hold_suppresses_the_transition(void)
 {
-    const s32 aa = portOptFind("n64_aa");
-
-    world_off_own();
+    fakeReset();
     portClassicSetHold(1);
-    CHECK(portOptSetValue(aa, 1) == 1);
-    CHECK(sVal[F_N64AA] == 1);
-    CHECK(sVal[F_LOWRES] == sMine[0]);      /* NOT forced: the sheet does it */
-    CHECK(sSavedN == 0);                    /* and nothing snapshotted */
+    set_text("n64_aa", "1");
+
+    CHECK(fakeGet("n64_aa") == 1);
+    expect_mine();                       /* the sheet lands its own values */
+    CHECK(fakeSnapshotCalls() == 0);
+
     portClassicSetHold(0);
 
-    /* Released, the transition works again - a hold must not leak. */
-    world_off_own();
-    CHECK(portOptSetValue(aa, 1) == 1);
+    fakeReset();                         /* a leaked hold would disable the mode */
+    set_text("n64_aa", "1");
     expect_classic_forced();
-    CHECK(sSavedN == NCLASSIC);
+}
+
+/* ---- the repair and report path (plan.md Phase 0) ---------------------- */
+
+/* The half-state the audit found: mode on, one setting drifted. Reporting it
+ * must name it, and repairing it must force it WITHOUT touching the snapshot -
+ * re-snapshotting here would overwrite the player's originals with the forced
+ * values, and a later "off" would then restore the mode's own settings. */
+static void repair_forces_and_remembers_nothing(void)
+{
+    s32 idx[8];
+
+    fakeClassicOn();
+    fakeSet("low_res", 720);            /* drifted */
+
+    CHECK(portClassicMismatchParts(idx, 8) == 1);
+    CHECK(idx[0] == 0);                 /* PART index: low_res is part 0 */
+
+    CHECK(portClassicRepair() == 1);    /* one value written */
+    CHECK(fakeGet("low_res") == 240);
+    expect_snapshot_is_mine();          /* the PLAYER's values, not 240/2/8/... */
+    CHECK(fakeSnapshotCalls() == 0);    /* and no snapshot was taken at all */
+    CHECK(fakeIniCalls() > 0);          /* and the repair is persisted */
+}
+
+/* A short buffer must not be overrun: the count still reports the truth. */
+static void mismatch_respects_the_caller_buffer(void)
+{
+    s32 idx[2];
+
+    fakeClassicOn();
+    fakeSet("low_res", 720);
+    fakeSet("msaa", 8);
+    fakeSet("mipmaps", 0);
+
+    CHECK(portClassicMismatchParts(idx, 2) == 3);   /* true count */
+    CHECK(idx[0] == 0);            /* part 0 = low_res; only 2 slots filled */
+    CHECK(idx[1] == 4);            /* part 4 = msaa */
+
+    /* A NULL buffer is legal: count only. */
+    CHECK(portClassicMismatchParts(NULL, 0) == 3);
+}
+
+/* Consistent and off are both "nothing wrong". */
+static void mismatch_is_zero_when_consistent_or_off(void)
+{
+    s32 idx[8];
+
+    fakeClassicOn();
+    CHECK(portClassicMismatchParts(idx, 8) == 0);   /* on, all classic */
+
+    fakeReset();
+    fakeSet("low_res", 720);
+    CHECK(portClassicMismatchParts(idx, 8) == 0);   /* off: nothing is forced */
 }
 
 int main(void)
 {
+    n64_aa_is_not_row_zero();
+
     text_on_forces_and_snapshots();
-    text_off_restores();
-    repeated_on_does_not_resnapshot();
-    repeated_off_does_not_restore();
+    all_true_spellings_transition();
+    refused_set_does_not_transition();
+    failed_setter_does_not_transition();
+
+    one_transition_is_one_save();
+    one_transition_is_one_snapshot();
+    repeated_on_is_not_a_transition();
+
+    flag_is_written_before_the_values();
+    nothing_is_saved_before_the_values_land();
+
+    toggle_applies_once();
     other_keys_do_not_transition();
-    disabled_part_is_left_alone();
-    set_value_transitions();
-    one_set_applies_once();
+    input_rows_still_set();
+
     the_hold_suppresses_the_transition();
+
+    repair_forces_and_remembers_nothing();
+    mismatch_respects_the_caller_buffer();
+    mismatch_is_zero_when_consistent_or_off();
 
     printf("port_options_n64aa: all checks passed\n");
     return 0;

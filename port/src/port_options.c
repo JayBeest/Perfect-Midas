@@ -1621,11 +1621,18 @@ static void classicInputFill(ClassicInput *in, s32 parts[CLASSIC_MODE_MAX],
 
 /** Land a plan: the snapshot first (it records what the writes overwrite), then
  * the writes in the plan's order. One ini write, as portClassicSetLive does. */
+/* Land a plan WITHOUT saving. The caller saves once, at the end of its own
+ * operation: portOptSetValue / portOptSetIni / portOptStep / portOptSetIndex all
+ * do, which is what makes "one change, one save" true from every setter. This
+ * used to save here, so a text set through portOptSetIni saved twice - same
+ * values, twice the disk churn, and no test could see it until one counted. */
 static void classicPlanApply(const ClassicPlan *p)
 {
     extern void portVideoClassicSavedSet(const s32 *v) __attribute__((weak));
     s32 i;
 
+    /* The snapshot goes first: it records the values the writes below overwrite.
+     * video.c writes classic_saved to midas.ini itself. */
     if (p->snapshot && portVideoClassicSavedSet != NULL)
     {
         portVideoClassicSavedSet(p->saved);
@@ -1633,10 +1640,6 @@ static void classicPlanApply(const ClassicPlan *p)
     for (i = 0; i < p->write_n; i++)
     {
         portOptSetValueQuiet(portOptFind(sClassicKeys[p->write_idx[i]]), p->write_val[i]);
-    }
-    if (p->snapshot || p->write_n > 0)
-    {
-        portOptSave();
     }
 }
 
@@ -1650,16 +1653,31 @@ s32 portClassicMismatchParts(s32 *idx, s32 max)
 {
     s32 parts[CLASSIC_MODE_MAX], classic[CLASSIC_MODE_MAX], current[CLASSIC_MODE_MAX];
     s32 saved[CLASSIC_MODE_MAX];
+    s32 found[CLASSIC_MODE_MAX];
     ClassicInput in;
     s32 n;
+    s32 i;
 
     classicInputFill(&in, parts, classic, current, saved);
     if (!in.mode_on)
     {
         return 0;
     }
-    n = portClassicMismatch(in.parts_on, in.classic, in.current, in.n, idx);
-    (void) max;   /* the buffer is the caller's promise: CLASSIC_MODE_MAX entries */
+    /* Count into our own buffer, then copy only what the caller has room for.
+     * The count returned is the TRUE count, so a caller with a short buffer still
+     * learns that six settings disagree even if it can only name two - and,
+     * more to the point, nothing writes past `max`. This used to ignore `max`
+     * and fill the caller's array with up to CLASSIC_MODE_MAX entries. */
+    n = portClassicMismatch(in.parts_on, in.classic, in.current, in.n, found);
+    if (idx != NULL)
+    {
+        const s32 room = (max < n) ? max : n;
+
+        for (i = 0; i < room; i++)
+        {
+            idx[i] = found[i];
+        }
+    }
     return n;
 }
 
@@ -1681,5 +1699,9 @@ s32 portClassicRepair(void)
     in.op = CLASSIC_OP_FIX;
     portClassicPlan(&in, &plan);
     classicPlanApply(&plan);
+    if (plan.snapshot || plan.write_n > 0)
+    {
+        portOptSave();   /* the applier does not save; this verb is its own caller */
+    }
     return plan.write_n;
 }
