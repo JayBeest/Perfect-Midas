@@ -5000,6 +5000,44 @@ s32 videoInit(void)
         }
     }
 
+    { /* [display] room_cache / tri_hoist (interpreter work from the Xbox port):
+       * GE_ROOMCACHE=0/1/2 and GE_TRIHOIST=0/1 override
+       * the ini for A/B (the shot harness runs both ways).
+       *
+       * BEFORE the boot flags, with the other env overrides: Classic Mode sets
+       * maxfps=-1, and hw pacing forces room_cache to 0 (the fill model reads
+       * the interpreter's triangles). Applied after the flags, GE_ROOMCACHE=2
+       * put room_cache back ON under hardware pacing, silently - the same
+       * half-applied mode the GE_N64AA block above was moved to remove. */
+        extern char *getenv(const char *);
+        const char *e = getenv("GE_ROOMCACHE");
+        if (e != NULL)
+        {
+            s_CfgRoomCache = SDL_atoi(e);
+            if (s_CfgRoomCache < 0 || s_CfgRoomCache > 2) s_CfgRoomCache = 0;
+            /* hw pacing owns room_cache: the fill model reads the
+             * interpreter's triangles, so the loader forces it off when it
+             * meets tickhz=hw. A knob that turned it back on HERE would
+             * restore the one combination the rest of the file refuses - and
+             * "tickhz=hw - room_cache forced 0" has already been and gone by
+             * this point. Permitted to try, never silent about failing. */
+            if (s_CfgTickHz == -1 && s_CfgRoomCache != 0)
+            {
+                portConLogf("ge: video: GE_ROOMCACHE=%d ignored - tickhz=hw forces room_cache 0 "
+                            "(the fill model reads the interpreter's triangles)\n", s_CfgRoomCache);
+                s_CfgRoomCache = 0;
+            }
+            portRoomCacheSetMode(s_CfgRoomCache);
+        }
+        e = getenv("GE_TRIHOIST");
+        if (e != NULL)
+        {
+            s_CfgTriHoist = (e[0] != '0');
+            gfx_tri_hoist = s_CfgTriHoist ? 1u : 0u;
+        }
+        portConLogf("ge: video: room_cache=%d tri_hoist=%d\n", s_CfgRoomCache, s_CfgTriHoist);
+    }
+
     /* The boot flags, after the ini and after the env overrides (so they win),
      * and before the renderer is created below - Classic Mode forces msaa, which
      * has to be in place before gfx_init. */
@@ -5081,25 +5119,6 @@ s32 videoInit(void)
     { /* gfx_low_res itself is gated per frame in videoStartFrame -
        * levels only, never the menus. GE_LOWRES was applied above, before the
        * boot flags, so -n64_aa's forced 240 wins over it. */
-    }
-    { /* [display] room_cache / tri_hoist (interpreter work from the Xbox port):
-       * GE_ROOMCACHE=0/1/2 and GE_TRIHOIST=0/1 override
-       * the ini for A/B (the shot harness runs both ways). */
-        extern char *getenv(const char *);
-        const char *e = getenv("GE_ROOMCACHE");
-        if (e != NULL)
-        {
-            s_CfgRoomCache = SDL_atoi(e);
-            if (s_CfgRoomCache < 0 || s_CfgRoomCache > 2) s_CfgRoomCache = 0;
-            portRoomCacheSetMode(s_CfgRoomCache);
-        }
-        e = getenv("GE_TRIHOIST");
-        if (e != NULL)
-        {
-            s_CfgTriHoist = (e[0] != '0');
-            gfx_tri_hoist = s_CfgTriHoist ? 1u : 0u;
-        }
-        portConLogf("ge: video: room_cache=%d tri_hoist=%d\n", s_CfgRoomCache, s_CfgTriHoist);
     }
     { /* [display] hw_mipmaps: N64 mip chains on G_TL_LOD draws (reduces Low Res
        * moire). GE_HWMIPMAPS=0/1 overrides the ini for A/B. */
