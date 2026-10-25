@@ -12,6 +12,8 @@
  * and a wrapped numerator reads as a plausible but wildly wrong rate.
  */
 
+#include <stdio.h>
+
 #include "tick_stats.h"
 
 uint32_t portStatsRatePerSec(uint32_t delta, uint32_t dt_ms, uint32_t scale)
@@ -56,4 +58,26 @@ uint32_t portStatsCreditedFields(uint32_t measured, uint32_t cap_fields)
     }
 
     return cap_fields;
+}
+
+const char *portTickIniValue(int tickhz, char *buf, unsigned len)
+{
+    if (buf == NULL || len == 0) {
+        return NULL;
+    }
+    if (tickhz == -1) {
+        if (len < 3) {
+            return NULL;
+        }
+        buf[0] = 'h';
+        buf[1] = 'w';
+        buf[2] = '\0';
+        return buf;
+    }
+    if (tickhz < 0) {
+        return NULL; /* -2: the coupling's "re-derive" sentinel, not a rate */
+    }
+
+    snprintf(buf, (size_t) len, "%d", tickhz);
+    return buf;
 }

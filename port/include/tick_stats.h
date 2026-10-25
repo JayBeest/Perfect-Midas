@@ -81,6 +81,25 @@ uint32_t portStatsFieldsPerTickX100(uint32_t fields, uint32_t ticks);
 uint32_t portStatsMeasuredFields(uint32_t elapsed_counts, uint32_t field_counts);
 uint32_t portStatsCreditedFields(uint32_t measured, uint32_t cap_fields);
 
+/** The text midas.ini's `tickhz` line should hold for a resolved tick rate.
+ *
+ * -1 is hw pacing and is written as the literal "hw"; 0 means uncapped and any
+ * positive value is the rate in Hz. The text is returned in `buf` (at least
+ * PORT_TICK_INI_BUF bytes) and `buf` is returned, or NULL when there is no text
+ * to write at all.
+ *
+ * The NULL case is the point: video.c keeps the resolved rate in an int and
+ * uses -2 as a "re-derive this" sentinel inside videoCoupleTickToMaxFps. -2 is
+ * a state, not a rate, and writing it would put a value in the file the loader
+ * cannot resolve - the exact defect this function exists to prevent (a file
+ * whose `tickhz` says something other than what was running).
+ *
+ * Lives here, beside the rest of the tick arithmetic, because it is the only
+ * pure translation unit the tests can reach: port/tests/tick_stats.c checks the
+ * text without a window, a GPU or a ROM. */
+#define PORT_TICK_INI_BUF 12
+const char *portTickIniValue(int tickhz, char *buf, unsigned len);
+
 /** D4: the tick baseline to measure this window against.
  *
  * lvlStageLoad() zeroes g_GlobalTickCount (src/game/lv.c) and the stat pass

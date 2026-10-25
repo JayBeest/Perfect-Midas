@@ -737,6 +737,56 @@ resolves back to hw pacing — and meets the 8.7 s Dam hold again next launch.
 so this state is reachable but not the intended steady state. The writer should
 never emit a pair the loader resolves differently from what was running.
 
+**RESOLVED (F3-A, this commit series).** The writer now records the mode:
+`videoPersistDerivedTick` writes the literal `hw` when the resolved rate is -1,
+through `portTickIniValue` (`port/src/tick_stats.c`, tested in
+`port/tests/tick_stats.c`). Two things had to change besides the early return
+that skipped every hw write. The live `maxfps=-1` path now persists at all — it
+returned before calling the writer. And `s_CfgTickAsWritten` is now recorded
+only from a line that came from the file (`s_CfgParsingIni`), because
+`videoCoupleTickToMaxFps` calls the same `tickhz` setter *while the file is
+still being read*, and that call used to mark the file as saying `hw` even when
+it said `120`. Without that second fix the first one would have been invisible
+exactly in this section's case.
+
+Note what did *not* change: a file resolving to hw still re-enters hw pacing,
+and that is now correct behaviour rather than a contradiction, because the file
+says `hw`. The 8.7 s hold is therefore still what `maxfps=-1` costs; §11.2 is
+unchanged.
+
+The writer compares two things: the rate that is running, and the rate the file
+says. Only the ini parse loop records the second one, for the `tickhz` key, and
+it records the text's value before any clamp (`videoTickTextValue`,
+`port/src/video.c`). The `tickhz` handler in `videoSetDisplayOption` records
+nothing, because `videoCoupleTickToMaxFps` calls that handler with `hw` *while
+the file is still being read* — a recording there would attribute to the file a
+value the coupling synthesised.
+
+That distinction was not cosmetic. The first cut of this fix used a "we are
+parsing" flag set around the whole dispatch, which let the synthetic call
+record `hw` as written; the writer then saw `-1 == -1` and skipped. It passed
+the obvious test only because this machine's `midas.ini` happens to list
+`maxfps` before `tickhz`, and it would have left the bug live for a file with
+the two lines the other way round — a legal file, since nothing gives
+`midas.ini` a line order. Recorded here because it is the same failure the
+third-pass audit found twice: a fix verified on one shape of input, reported as
+the mechanism working.
+
+Executed 2026-10-25 (`build_macos`, Apple Software Renderer, `GE_FRAMES=90`,
+ini restored from a backup after each case):
+
+- `maxfps=-1` then `tickhz=120` → `tickhz=hw`, logged `midas.ini 120 -> hw`
+- `tickhz=120` then `maxfps=-1` → `tickhz=hw`, logged `midas.ini 120 -> hw`
+- `tickhz=hw` then `maxfps=-1` → no write (correct: file and running state agree)
+- no `tickhz` line with `maxfps=-1` → still none added
+- `tickhz=hw` with a live `cl_maxfps 120` → `maxfps=120`, `tickhz=120`
+- `tickhz=hw` then `maxfps=120`, launched cold → stays hw, nothing written.
+  This one is pre-existing and not a violation of the invariant: the running
+  mode *is* hw and the file says `hw`, so they agree. It does mean a hand-written
+  `tickhz=hw` outranks `maxfps` across a launch, which is worth knowing and not
+  worth changing here — the player leaves hw by changing Max FPS live, and that
+  path writes the number (previous case).
+
 ### 11.4 `GE_STAGE` direct launch does not exercise hw pacing
 
 `portTickHwPace()` requires `portStageRunning()`, i.e.

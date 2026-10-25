@@ -474,10 +474,33 @@ Measured in the same hw-pacing Dam configuration as `run7`:
 The before/after is the point: the same windows that read `8 fld model held 4`
 — healthy by the old rule — now read `credit 8 of 53`.
 
-**What is still open.** F3's code half (the `tickhz=hw` writer) and D5 itself
-(the clamp versus a deliberate hold) are deferred to `NEXT_AGENT_V3.md`, which
-also inherits the unverified items in §2 and two design documents that are
-cited but do not exist.
+**What is still open.** D5 itself (the clamp versus a deliberate hold) is
+deferred to `NEXT_AGENT_V3.md`, which also inherits the unverified items in §2
+and two design documents that are cited but do not exist.
+
+### F3's code half — resolved (`NEXT_AGENT_V3.md` Task A)
+
+F3 said the manual claimed the game rewrites `tickhz` to `hw` under `maxfps=-1`
+and that it does not. The code is now what the manual said the code was — with
+the manual corrected to the new behaviour, not the old claim restored
+(`tools/midas_ini_help.txt`).
+
+The writer (`videoPersistDerivedTick`, `port/src/video.c`) now writes `hw` when
+the running rate is hw, and the live `maxfps=-1` path persists at all — it used
+to return before calling the writer. The text comes from `portTickIniValue`
+(`port/src/tick_stats.c`), a pure function with four cases under `ctest`
+(`tick_stats`: `-1 -> "hw"`, `0 -> "0"`, `60 -> "60"`, `120 -> "120"`, and
+`-2 ->` nothing, since `-2` is the coupling's re-derive sentinel and not a rate).
+
+A first cut of this fix was **order-dependent and silently still broken for a
+file listing `tickhz` above `maxfps`**; it is recorded rather than removed from
+the history because it is the third instance on this branch of a fix verified
+on one shape of input. The mechanism is in
+`docs/port/tick-and-field-accounting.md` §11.3, with the six executed cases.
+
+Verified: builds clean apart from the pre-existing `__DATA,__common` warning;
+`ctest` 9/9; the six ini cases in §11.3 executed from `build_macos` with the
+user's `midas.ini` restored (md5 unchanged) after each.
 
 ---
 

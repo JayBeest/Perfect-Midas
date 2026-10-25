@@ -13,6 +13,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "tick_stats.h"
 
 #define CHECK(expr) do { if (!(expr)) { \
@@ -136,6 +137,31 @@ static void stall_cap(void)
     CHECK(portStatsCreditedFields(600, 8) == 8);
 }
 
+/* The trailing text of midas.ini's tickhz line: "hw" for hw pacing, else the
+ * rate. The one thing this pins that a reading of video.c would not: -1 is a
+ * MODE and -2 is a state, and only the first belongs in the file. */
+static void tick_ini_value(void)
+{
+    char buf[PORT_TICK_INI_BUF];
+
+    /* the four cases the writer has to get right */
+    CHECK(portTickIniValue(-1, buf, sizeof buf) != NULL);
+    CHECK(strcmp(portTickIniValue(-1, buf, sizeof buf), "hw") == 0);
+    CHECK(strcmp(portTickIniValue(0, buf, sizeof buf), "0") == 0);   /* uncapped */
+    CHECK(strcmp(portTickIniValue(60, buf, sizeof buf), "60") == 0);
+    CHECK(strcmp(portTickIniValue(120, buf, sizeof buf), "120") == 0);
+    CHECK(strcmp(portTickIniValue(144, buf, sizeof buf), "144") == 0);
+
+    /* -2 is videoCoupleTickToMaxFps's "no `want` equals it, re-derive" sentinel.
+     * Writing it would leave a file the loader cannot resolve. */
+    CHECK(portTickIniValue(-2, buf, sizeof buf) == NULL);
+    CHECK(portTickIniValue(-3, buf, sizeof buf) == NULL);
+
+    /* a buffer too small for the text yields nothing rather than a truncation */
+    CHECK(portTickIniValue(-1, buf, 2) == NULL);
+    CHECK(portTickIniValue(-1, NULL, sizeof buf) == NULL);
+}
+
 int main(void)
 {
     healthy_60hz();
@@ -147,6 +173,7 @@ int main(void)
     stage_load_reset();
     negative_never_published();
     stall_cap();
+    tick_ini_value();
 
     printf("tick_stats: all checks passed\n");
     return 0;
