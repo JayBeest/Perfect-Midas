@@ -140,9 +140,15 @@ padN_stickmode.
                       |            | A stage load is held for the console's
                       |            | load time too (about 9 s to enter Dam,
                       |            | with nothing drawn meanwhile)
-  tickhz              | (derived)  | Worked out from maxfps and rewritten by
-                      |            | the game; `hw` when maxfps is -1. Do
-                      |            | not edit; change maxfps
+  tickhz              | (derived)  | Do not edit this one; Max FPS decides
+                      |            | the tick rate. A numeric value here
+                      |            | follows maxfps: 1..59 derive 60, 60 and
+                      |            | up derive that number, 0 leaves both
+                      |            | uncapped. Under maxfps=-1 the game runs
+                      |            | the N64's pacing whatever this line
+                      |            | says, so a number left behind is stale
+                      |            | and ignored rather than an override -
+                      |            | set Max FPS to change the rate
   vsync               | 1          | 0 = never wait for vblank (tearing)
   render_thread       | -1         | Draw on its own thread. -1 = auto,
                       |            | 0 = off, 1 = on

@@ -209,8 +209,12 @@ Four numbers, each with one meaning:
 
 - `fps` — frames presented per second.
 - `tk` — simulation ticks per second, from `g_PortTickSerial`, which increments
-  once per `lvlTick` call (sub-ticks and paused ticks included). This is the real
-  tick rate the label always promised.
+  once per `lvlTick` call (sub-ticks and paused ticks included). It is the real
+  tick rate the label always promised, with one qualification: a tick is taken
+  only once the previous frame has been presented (`boss.c`'s `pendingGfx`
+  guard), so `tk` follows the frame rate whenever drawing is the limit and will
+  not show a raised tick rate the renderer cannot sustain. Measured, that is
+  most of the time: every capture cited here reads `tk == fps`.
 - `f/s` — fields credited to the sim per second. **60.0 means game speed is
   correct**, at any tick rate and any frame rate. This is the number that answers
   the question `TPS` was mistakenly believed to answer.

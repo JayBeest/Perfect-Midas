@@ -198,6 +198,13 @@ step covers. `fields/s` (i.e. `Δg_GlobalTimer`) answers the only question that
 matters for correctness: is simulated time advancing at wall-clock rate? It
 should read ~60.0 in every healthy mode, console or port, at any tick rate.
 
+"~60.0" is looser than it looks. The figure is integer fields over a window that
+is never exactly 500 ms, so healthy readings scatter a few percent: measured
+across four configurations on 2026-10-25 (60 Hz, `tickhz=120`, `maxfps 30`, and
+hw pacing), the healthy range was **59.3 to 62.9**. Treat the last digit as
+window jitter and only a sustained departure from that band as a fault — the
+narrative below says "60.0" where it means "in that band".
+
 At the time of writing that quantity was **not plumbed to any display.**
 `g_GlobalTimer` is internal to `lv.c`, and both consumers only saw
 `g_PortStatFps`/`Tps`. It is now the `f/s` field (§7).
@@ -388,6 +395,32 @@ Note the renderer line: `tickhz=hw` was configured but `portTickHwPace()` was
 false at stage 90 (`portStageRunning()` is false outside a stage), so no hold was
 applied and the 466 ms was pure software rasterisation. The cap fired anyway —
 it is not a hw-mode-only defect.
+
+#### D5 is DEFERRED, not fixed (2026-10-25, third-pass audit)
+
+The clamp is confirmed and the loss is real. The decision it needs — whether a
+*deliberate* hold should be clamped at all — is a pacing change, and this branch
+does not touch pacing. Recorded so it is not lost:
+
+- `boss.c` held the loop for N fields, so it already *knows* the elapsed time
+  was intended. One candidate fix passes that expectation into
+  `waitForNextFrame` and raises the cap to `max(8, N)` for that tick.
+- The counter-argument is §5.2's own: the cap exists because the caller cannot
+  in general tell a hold from a window drag, and threading the expectation
+  through adds a cross-module contract that can itself be wrong.
+- Whichever way it goes, the hw model's 6-field render cap, the 30-field total
+  cap (§10) and the 8-field credit cap are three caps on one quantity and
+  should be decided together rather than one at a time.
+
+Still open as of this commit: the hitch line reports `fld` (the fields credited
+to the sim) beside the hw model's hold and invites a comparison of the two, and
+that comparison does not measure the loss — on a renderer slower than the model
+the frame spans far more wall time than either number, so it reads "healthy" at
+exactly the moment the most simulated time is being dropped. See the third-pass
+audit, `docs/port/audio-pump-audit-pass3.md` F1. Recorded rather than fixed here
+because the honest figure is the clamp's own verdict, which the credit path does
+not yet publish; this branch is documentation and instrument work, and that is a
+change to what the hitch line reports.
 
 ### 5.3 Two defects in the fix itself, found by review
 
@@ -628,7 +661,10 @@ level). This section is about the **hw model**, not the tick accounting of
 ### 11.1 D5 does not fire at ordinary frame rates
 
 The session held 15 fps for a long spell with `f/t 4.00` and `f/s 59.8–60.5`, and
-832 fps for another with `f/t 0.07` and `f/s 60.0`. The 8-field credit cap is
+832 fps for another with `f/t 0.07` and `f/s 60.0`. (Those narrow bands are that
+session's readings, not the definition of healthy — §2.2 records a 59.3–62.9
+range across four configurations, and the last digit is window jitter.) The
+8-field credit cap is
 reached only above 133 ms per frame (~7.5 fps), so it took a software-rendered
 launch to trigger it at all. **On a machine that holds 15 fps, hw pacing is
 time-correct.** Note `f/t 4.00` exactly: at a frame cost of four fields the cap

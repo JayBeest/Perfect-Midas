@@ -97,11 +97,15 @@ WHY THE LOG CARRIES MORE THAN THE SCREEN
            no clock. Everything else on the line is in the same order.
 
   Both forms are in the line, so a log line can be read side by side with a
-  screenshot taken at the same moment. Two caveats: the log writes once a
+  screenshot taken at the same moment. Three caveats: the log writes once a
   second and the block draws when it draws, so the 500 ms rate windows roll
   independently and SND, PMP and RND can differ by a whole window - compare
   these loosely, not to the millisecond. And the screen's k/s is truncated to
-  thousands, so it can sit up to 999 below the log's exact figure.
+  thousands, so it can sit up to 999 below the log's exact figure. Finally,
+  FPS, tk, f/s and f/t are sampled once per drawn frame, so while the game is
+  not drawing - a stage load, a long stall - they repeat the last value they
+  had while the pump columns carry on updating. A frozen FPS or f/s in a load
+  is a still frame, not a measurement.
 
 
 TIMESTAMPS
@@ -174,37 +178,47 @@ READING THE BLOCK
 
   FPS       Frames drawn per second.
   TK        Simulation ticks per second. Max FPS sets the rate it aims for,
-            but three quite different things hold it lower. A display that
-            cannot present that often: with vsync on, a 60 Hz panel allows 60
-            ticks a second, so the default Max FPS of 120 still reads 60tk and
-            nothing is wrong. A machine that cannot keep up: with vsync off,
-            tk below the rate you set means that. Or Hardware pacing doing its
-            job: with Max FPS -1 the loop holds each frame for the fields the
+            but a tick is taken only once the previous frame has been
+            presented, so TK tracks FPS whenever drawing is what the machine
+            is limited by - in practice the two read the same number most of
+            the time. Three things hold TK below the rate you set. A display
+            that cannot present that often: with vsync on, a 60 Hz panel
+            allows 60 ticks a second, so the default Max FPS of 120 still
+            reads 60tk and nothing is wrong. A machine that cannot keep up:
+            with vsync off, tk below the rate you set means that - and note it
+            is the renderer that is behind, not the simulation, which is why
+            f/s can read 60.0 beside it. Or Hardware pacing doing its job:
+            with Max FPS -1 the loop holds each frame for the fields the
             console would have needed, so 15tk is the console's own rate and
-            not a slow machine. In every case it is not a measure of game
+            not a slow machine. In every case TK is not a measure of game
             speed - read f/s for that.
   f/s       FIELDS PER SECOND. Sixty of these make a second of game time. 60.0
             means the game is running at the right speed - at any tick rate and
-            any frame rate. THIS IS THE NUMBER TO TRUST. Below 60.0 the game is
-            in slow motion: it is losing real time, and the music will drift
-            ahead of the world because the music runs on real time and the
-            world does not. It reads 0 while the game is paused or the controls
-            are locked, because no game time is passing - correct, not a fault.
-            It also reads 0 during a stage load, and for one window after a
-            frame so long that no tick landed inside the half-second window
-            (a multi-second hitch, not an ordinary 20ms frame - those show up
-            in f/t, above). If it reads 0 while you are playing and the world
-            is moving, that IS a fault - attach the log.
+            any frame rate. THIS IS THE NUMBER TO TRUST. A few percent either
+            side of 60.0 is window jitter, not drift: the figure is measured
+            over the last half second, which is never exactly half a second,
+            so healthy readings in practice run from about 59 to about 63.
+            Below that the game is in slow motion: it is losing real time, and
+            the music will drift ahead of the world because the music runs on
+            real time and the world does not. It falls to near 0 - under about
+            2.0 - while the game is paused or the controls are locked, because
+            no game time is passing; correct, not a fault. It does the same
+            during a stage load, and for one window after a frame so long that
+            no tick landed inside the half-second window (a multi-second
+            hitch, not an ordinary 20ms frame - those show up in f/t, above).
+            If it sits under 2.0 while you are playing and the world is
+            moving, that IS a fault - attach the log.
   f/t       Fields each tick absorbed. 1.00 means one video field per tick
             (a normal 60 fps frame). Above 1.00 means frames are taking longer
             than a field, so each tick carries more game time - which is
             exactly what the N64 did when it slowed down, and what Hardware
             pacing reproduces. Below 1.00 means a raised tick rate is stepping
             inside one field. 0.00 is not a rate: it means no game time was
-            credited in the half-second window - paused, controls locked, a stage
-            load, or the middle of a very long frame. tk can still read 60 while
-            this is 0.00: the ticks ran, they just advanced no game time. Read
-            f/s instead.
+            credited in the half-second window - paused, controls locked, or
+            the middle of a very long frame. A stage load usually still lands
+            one tick, so it commonly reads above zero there rather than 0.00.
+            tk can still read 60 while this is 0.00: the ticks ran, they just
+            advanced no game time. Read f/s instead.
   PMP       Pump calls per second. This is the rate the game's wait loop came
             round, not the frame rate, and not a measure of anything on its
             own. It is high when the loop is spinning on the renderer and low
