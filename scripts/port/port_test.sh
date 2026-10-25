@@ -7,13 +7,13 @@
 # line per test, a summary, an exit code - and by default then launches the game
 # with the diagnostics on, which is the second half of the demo.
 #
-#   scripts/port/port_test.sh              # all ten tests, then the game
+#   scripts/port/port_test.sh              # the whole suite, then the game
 #   scripts/port/port_test.sh --audio      # only the audio/tick/layout four
 #   scripts/port/port_test.sh --no-game    # tests only (CI, or a quick check)
 #   scripts/port/port_test.sh --game-only  # just launch, no tests
 #   scripts/port/port_test.sh -v           # windowed on display 0 for the game
 #
-# `make port_test` runs all ten, `make audio_test` the audio subset, and
+# `make port_test` runs the whole suite, `make audio_test` the audio subset, and
 # `make demo` runs the whole thing windowed for a recording. Do not add a second
 # implementation: the targets and the demo must show the same thing.
 #

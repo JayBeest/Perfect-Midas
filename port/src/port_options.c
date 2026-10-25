@@ -378,17 +378,11 @@ void portClassicSetHold(s32 on)
 }
 
 /**
- * THE choke point. Every table write goes through here, so this is the one place
- * that has to know that n64_aa carries a mode with it.
+ * THE choke point: every table write passes here, so this is the one place that
+ * has to know n64_aa carries a mode with it. Before this, four surfaces applied
+ * the preset and three did not, each having learned it separately.
  *
- * Before this, four surfaces applied the preset and three did not, because each
- * learned it separately: the toggle called portClassicSetLive, the watch called
- * rowClassicSync, the VIDEO sheet pended its own values, and the console and the
- * ini and the env var did nothing. An entry point added next year would have
- * done nothing too. Now it cannot.
- *
- * Only on a REAL change: setting n64_aa to the value it already has must not
- * re-enter the mode, because entering remembers the current values over
+ * Only on a REAL change: re-entering would remember the current values over
  * classic_saved and the player's originals would be gone.
  */
 static s32 optSet(const char *key, s32 v)

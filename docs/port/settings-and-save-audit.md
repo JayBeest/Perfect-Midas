@@ -302,7 +302,7 @@ Five commits for the sweep's own findings, one subject each:
 Then the Classic Mode repair, from `plan.md`, in its planned order:
 
 - `tests: pin Classic Mode's forced values as a pure rule` — the rule itself
-  (`port/src/classic_mode.c`) and 15 cases written from the four defects.
+  (`port/src/classic_mode.c`) and the cases written from the four defects.
 - `console: cl_classic, and the boot report for a half-applied Classic Mode` —
   a half-state is now named at boot, and `cl_classic [status|fix|on|off]`
   repairs it. `fix` never re-snapshots, which is asserted by turning the mode

@@ -195,7 +195,7 @@ from the toggle. This is also the manual escape hatch for anyone already stuck.
 
 ### 0.4 Exit criteria for Phase 0
 
-- `ctest` 12/12 (`classic_mode` and `port_options_n64aa` added — §3.1).
+- `ctest` green, with `classic_mode` and `port_options_n64aa` added — §3.1.
 - All three mismatch states announce, and the consistent state is silent —
   executed on all four: console, hand-edit, `GE_N64AA=1`, and consistent.
 - `cl_classic fix` repairs a hand-edited `n64_aa=1`, verified by the ini diff:
@@ -266,9 +266,9 @@ would have caught the defect that actually shipped.
 
 **`classic_mode`** (`port/tests/classic_mode.c`) — the **rule**. Drives
 `portClassicPlan` and `portClassicMismatch` with value sets computed by hand.
-Sixteen cases: mismatch per part, a consistent file, a 4-field older snapshot, a
-part switched off, no parts at all, `saved_n` longer than `n`, writes emitted in
-part order, and FIX never snapshotting. Mutation-checked: forcing the snapshot
+Cases: mismatch per part, a consistent file, a 4-field older snapshot, a part
+switched off, no parts at all, `saved_n` and `n` past the buffer bound, plan
+reuse, and FIX never snapshotting. Mutation-checked: forcing the snapshot
 off and emitting unchanged values each fail a different case.
 
 **`port_options_n64aa`** (`port/tests/port_options_n64aa.c`) — the **seam**.
@@ -354,7 +354,7 @@ are in.
 
 - Every entry point (all seven from §1) produces consistent state, executed.
 - `grep -c portClassicSetLive` outside `port_options.c` is 0.
-- `ctest` 12/12, plus the ordering test above.
+- `ctest` green, plus the ordering test above.
 - The audit's headline finding is closed.
 
 **Risk:** this is the slice most likely to regress a working path, and it is

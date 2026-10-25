@@ -457,13 +457,10 @@ static void conCmdClient(const char *name, const char *value)
     {
         /* Classic Mode's state, and the repair for a half-applied one.
          *
-         * This verb exists because four entry points leave the mode on with
-         * values that are not classic - a hand-edited n64_aa=1, GE_N64AA=1, an
-         * env override applied while the mode was already on, and (until the
-         * next commit) this console's own cl_n64_aa. -n64_aa cannot repair any
-         * of them: it declines to act on a mode that is already on, because
-         * re-entering would overwrite the player's saved values with the forced
-         * ones. So repair is its own operation, and it remembers nothing. */
+         * -n64_aa cannot repair a half-state: it declines to act on a mode that
+         * is already on, because re-entering would overwrite the player's saved
+         * values with the forced ones. So repair is its own operation, and it
+         * remembers nothing. */
         extern s32         portClassicMismatchParts(s32 *idx, s32 max);
         extern s32         portClassicRepair(void);
         extern s32         portClassicCount(void);

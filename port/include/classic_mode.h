@@ -4,35 +4,13 @@
 /*
  * Classic Mode's forced values, as pure arithmetic.
  *
- * Classic Mode is a preset: turning it on remembers what the seven settings
- * below currently are, then forces its own values on them; turning it off puts
- * the remembered ones back. That rule is implemented three times today
- * (port_options.c portClassicSetLive, port_watchpages.c rowClassicSync,
- * front.c portSheetClassicPreset/Revert), and four other entry points apply no
- * rule at all - the console, the ini, GE_N64AA and a hand edit. See
- * docs/port/settings-and-save-audit.md.
+ * Entering the mode remembers the seven settings it owns and forces its own
+ * values on them; leaving it puts the remembered ones back. No SDL, no globals,
+ * no key names - the caller passes values positionally and gets back the writes
+ * to perform. port/tests/classic_mode.c drives it.
  *
- * This file is the rule itself, once, with nothing around it: no SDL, no engine
- * headers, no globals, no ini, no key names. The caller supplies the parts, the
- * values each part forces, the current values and any saved ones, and gets back
- * the list of writes to perform. port/tests/classic_mode.c drives the same
- * functions, so the rule can be judged instead of eyeballed.
- *
- * WHY THE CALLER SUPPLIES THE KEY NAMES' VALUES AND NOT THE NAMES
- *
- * The single table of classic keys and their forced values lives in
- * port_options.c (sClassicKeys/sClassicVals) and stays there - it is
- * append-only, and both the menus and the watch read it. This file takes the
- * values positionally so it can be linked into a test with no engine at all.
- * The only ordering contract is that every array here is in the same order as
- * portClassicKey().
- *
- * WHAT IT DELIBERATELY DOES NOT DECIDE
- *
- * Whether a write is applied immediately or pended for an Apply Changes screen
- * to land. The VIDEO sheet pends its picks so the player can see them in red
- * before committing; the console and the watch write at once. The plan says
- * WHICH values and in what order; the surface decides when.
+ * Why it exists: that rule was written three times in three surfaces and skipped
+ * by four entry points. See docs/port/settings-and-save-audit.md.
  */
 
 #include <stddef.h>
@@ -41,27 +19,14 @@
 extern "C" {
 #endif
 
-/* Buffer sizing for the fixed arrays below. The classic key list is 7 today and
- * append-only; this is headroom, not the count. Callers pass their own `n`
- * (portClassicCount()), which is what the loops use. */
+/* Fixed array size. The real count is portClassicCount() (7, append-only); this
+ * is headroom, and callers pass their own n. */
 #define CLASSIC_MODE_MAX 16
 
-/* What the caller is doing. The op decides whether a snapshot is taken - which
- * is the whole difference between "turn it on" and "repair it":
- *
- *   TOGGLE_ON   entering the mode: remember `current`, then force.
- *   TOGGLE_OFF  leaving it: restore what `saved` holds.
- *   FIX         repair in place, no snapshot. Forces where the mode is on and
- *               restores where it is off. This is the one the console verb and
- *               a boot-time mismatch report need, because re-snapshotting
- *               there would overwrite the player's real values with the forced
- *               ones - the damage portClassicToggle's !s_CfgN64Aa guard exists
- *               to prevent, and the reason -n64_aa declines to act on a mode
- *               that is already on. */
 typedef enum {
-    CLASSIC_OP_TOGGLE_ON = 0,
-    CLASSIC_OP_TOGGLE_OFF,
-    CLASSIC_OP_FIX
+    CLASSIC_OP_TOGGLE_ON = 0,   /* entering: remember `current`, then force   */
+    CLASSIC_OP_TOGGLE_OFF,      /* leaving: restore what `saved` holds        */
+    CLASSIC_OP_FIX              /* repair in place, never remember            */
 } ClassicOp;
 
 typedef struct {
@@ -71,45 +36,33 @@ typedef struct {
     const int *classic;   /* n entries: the value that part forces              */
     const int *current;   /* n entries: the live value now                      */
     const int *saved;     /* saved_n entries: what classic_saved holds          */
-    int saved_n;          /* 0 = nothing remembered (an old or hand-edited ini) */
+    int saved_n;          /* 0 = nothing remembered (old or hand-edited ini)    */
     int n;                /* number of parts; portClassicCount()                */
 } ClassicInput;
 
 typedef struct {
-    int snapshot;             /* 1 = store `saved[0..saved_n)` BEFORE the writes */
+    int snapshot;                     /* 1 = store `saved` BEFORE the writes  */
     int saved[CLASSIC_MODE_MAX];
     int saved_n;
     int write_idx[CLASSIC_MODE_MAX];  /* part index to write */
-    int write_val[CLASSIC_MODE_MAX];  /* the value to write */
+    int write_val[CLASSIC_MODE_MAX];
     int write_n;
 } ClassicPlan;
 
 /*
- * Fill `out` from `in`. Every field of `out` is written on every call, so it
- * does not need clearing first.
+ * Fill `out` from `in`. Every field is written, so `out` need not be cleared.
  *
- * Only values that actually differ are emitted, so:
- *   - a fully-classic file plans no writes (FIX is a true no-op there);
- *   - a second identical TOGGLE_ON plans no writes either, which is what makes
- *     turning a mode on twice harmless without a separate guard.
- * The SNAPSHOT is emitted regardless of whether any write differs: if you turn
- * the mode on while already at the classic values, turning it off must restore
- * those same values, and that requires remembering them.
- *
- * Ordering: writes are emitted in part order (0..n), and the snapshot, when
- * present, must land before them - turning the mode on must remember what it is
- * about to overwrite.
+ * Only values that differ are emitted - a consistent file plans no writes; but
+ * the snapshot is decided by the OP, not by whether a write differs: entering
+ * while already at the classic values still remembers them, or leaving would
+ * restore nothing. The snapshot must land before the writes.
  */
 void portClassicPlan(const ClassicInput *in, ClassicPlan *out);
 
 /*
- * How many parts the mode forces but the live values do not match - the
- * mismatch a boot or a console change reports. `idx_out`, when not NULL,
- * receives the part indices that differ (up to `n` of them) so a log line can
- * name them rather than only counting them.
- *
- * Returns 0 when the mode is consistent, which is also the case while every
- * part is switched off: nothing is forced, so nothing can be wrong.
+ * How many forced parts do not match the live values. `idx_out` (optional) gets
+ * the PART indices, for a log line that names them. 0 when consistent, or when
+ * every part is switched off - nothing is forced then, so nothing is wrong.
  */
 int portClassicMismatch(const int *parts_on, const int *classic, const int *current,
                         int n, int *idx_out);
