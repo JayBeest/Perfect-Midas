@@ -5127,6 +5127,17 @@ s32 videoInit(void)
         if (e != NULL)
         {
             s_MipmapsEnv = SDL_atoi(e) != 0;
+            /* Mipmaps belong to Classic Mode (videoMipmapMode), so this knob
+             * can contradict a mode that reports itself on - the same
+             * half-applied shape as GE_N64AA=0 with -n64_aa, which 4ece424
+             * fixed. The knob is a diagnostic and still wins; it just does not
+             * win silently, and it is the only way to see the contradiction,
+             * since nothing else logs the mipmap mode. */
+            if (s_CfgN64Aa && portClassicPart(CLASSIC_PART_MIPMAPS) && s_MipmapsEnv == 0)
+            {
+                portConLogf("ge: video: GE_HWMIPMAPS=0 with Classic Mode on - mipmaps off "
+                            "for this run, though Classic Mode turns them on\n");
+            }
         }
         gfx_mipmaps = videoMipmapMode();
     }
