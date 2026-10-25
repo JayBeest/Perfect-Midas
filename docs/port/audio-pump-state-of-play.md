@@ -318,6 +318,33 @@ the log for the lines you need, and stop it. The expensive part is every frame
 spent inside Dam (~890 ms), not the pumps needed to get there — a wait for
 twelve `credit` lines reached the stage and finished in 30 seconds.
 
+**Both of those are scripts now, not advice.** Use them:
+
+```bash
+scripts/port/audio_run.sh -t 50 -s dam -e GE_HITCHMS=1,GE_HWSCALE=3 \
+    -w 'credit [0-9]* of' -n 5
+scripts/port/audio_pump_log.py <captured audio_pump.log>
+```
+
+`audio_run.sh` does the backup/restore, the eeprom md5 check, the
+refuse-if-running check, the early stop and the renderer line. `audio_pump_log.py`
+reads the pump log and reports starves, queue-vs-target and the target trend,
+with the limits of a 1 Hz sample stated in its header.
+
+### Where investigative code goes
+
+- **`port/tests/`** — anything that *asserts*. Registered explicitly in
+  `CMakeLists.txt` (no glob), pure C, sub-second. Nine files, nine tests.
+- **`scripts/port/`** — anything whose output a *human reads*. Probes, drivers,
+  analysers. `nat_test.sh` is the model.
+- **`build_macos/` — nothing.** `.gitignore:274` ignores it, so a harness there
+  dies with the session. That happened once on this branch and a measurement had
+  to be redone.
+
+The test: if it decides pass/fail, it belongs in `port/tests/`; if it prints
+numbers for interpretation, in `scripts/port/`, and its header must say what it
+can and cannot tell you.
+
 ---
 
 ## 7. The lesson worth carrying

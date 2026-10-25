@@ -688,7 +688,7 @@ static void test_simulation_survives_a_stall_between_pumps(void)
     CHECK(queued <= TARGET + ALIGN * BYTES_PER_SAMPLE);
 }
 
-/* ---- a jittered pump interval ------------------------------------------ */
+/* ---- a jittered pump interval, in either order -------------------------- */
 
 /*
  * The simulations above all pump at a CONSTANT interval, which is why none of
@@ -699,21 +699,68 @@ static void test_simulation_survives_a_stall_between_pumps(void)
  * before it.
  *
  * This drives `base_ms` pumps with every `spike_every`-th taking `spike_ms`,
- * against the same device model as simulate(). `use_effective` selects how the
- * target combines the interval floor with the ratchet:
+ * against the same device model as simulate(). Two independent switches, so each
+ * can be varied with the other held fixed:
  *
- *   0  max(floor, ratcheted)                  - the pump before this change
- *   1  portAudioPaceEffectiveTarget(...)      - floor + what the ratchet learned
+ *   use_effective  0  max(floor, ratcheted)              - the rule before df881c9
+ *                  1  portAudioPaceEffectiveTarget(...)  - floor + learned
+ *   refill_first   0  drain, then measure and refill     - THE PUMP'S REAL ORDER
+ *                  1  measure, refill, then drain        - what simulate() does
  *
- * The ratchet itself is stepped identically in both, so the only difference is
- * whether the headroom it learns can reach the queue.
+ * The ratchet itself is stepped identically in both arms, so the only variable
+ * is the one under test. `refill_first = 1` exists to reproduce the harness's
+ * own blind spot (see test_harness_order_decides_whether_a_starve_is_visible);
+ * every case about the POLICY uses 0, because that is what the game does.
  */
+
+/* Refill toward `target_eff` one aligned frame at a time, bounded by `cap_eff`.
+ * Returns the samples queued. */
+static unsigned jitterRefill(PortAudioPaceClock *c, unsigned *queued,
+                             unsigned pump_ms, unsigned target_eff, unsigned cap_eff)
+{
+    unsigned rendered = 0;
+
+    while (1) {
+        unsigned n = portAudioPaceFrame(c, pump_ms, *queued, target_eff, 1, &cfg);
+        unsigned bytes;
+
+        if (n == 0) {
+            break;
+        }
+        bytes = n * BYTES_PER_SAMPLE;
+        if (*queued + bytes > cap_eff) {
+            break;
+        }
+        *queued += bytes;
+        rendered += n;
+    }
+    return rendered;
+}
+
+/* The device plays for `pump_ms`, stopping when the queue runs out - it played
+ * silence from then on, which is what the caller counts as dry. */
+static void jitterDrain(unsigned *queued, unsigned pump_ms,
+                        long long *consumed_acc, long long *consumed)
+{
+    *consumed_acc += (long long) pump_ms * (long long) RATE;
+    while (*consumed_acc >= 1000) {
+        unsigned long long take = (unsigned long long) (*consumed_acc / 1000);
+
+        *consumed_acc -= (long long) take * 1000;
+        if (take > *queued / BYTES_PER_SAMPLE) {
+            take = *queued / BYTES_PER_SAMPLE; /* cannot play what is not queued */
+        }
+        *queued -= (unsigned) (take * BYTES_PER_SAMPLE);
+        *consumed += (long long) take;
+    }
+}
+
 static void simulate_jitter(unsigned base_ms, unsigned spike_every, unsigned spike_ms,
-                            unsigned seconds, int use_effective, SimResult *out)
+                            unsigned seconds, int use_effective, int refill_first,
+                            SimResult *out)
 {
     PortAudioPaceClock c;
     PortAudioPaceTarget t = {0, 0};
-    PortAudioPaceDrain d = {0, 0, 0, 0};
     long long consumed_acc = 0;
     unsigned queued = TARGET;
     unsigned pumps = (seconds * 1000u) / base_ms;
@@ -726,63 +773,47 @@ static void simulate_jitter(unsigned base_ms, unsigned spike_every, unsigned spi
     out->dry = 0;
     out->rendered = 0;
     out->consumed = 0;
-    (void) d;
 
     for (i = 0; i < pumps; i++) {
         unsigned pump_ms = (((i + 1) % spike_every) == 0) ? spike_ms : base_ms;
-        unsigned opened;
-        unsigned ran_dry;
-        unsigned floor_bytes;
+        unsigned floor_bytes = portAudioPaceMinTarget(pump_ms, &cfg);
         unsigned target_eff;
         unsigned cap_eff;
+        unsigned opened;
+        unsigned ran_dry;
 
-        /* The interval that just elapsed drains the queue BEFORE the pump gets
-         * a chance to refill - that is what makes an interval longer than the
-         * one before it starve. Sizing and draining the same interval (which is
-         * what the constant-rate simulations do) can never miss. */
-        consumed_acc += (long long) pump_ms * (long long) RATE;
-        while (consumed_acc >= 1000) {
-            unsigned long long take = (unsigned long long) (consumed_acc / 1000);
-
-            consumed_acc -= (long long) take * 1000;
-            if (take > queued / BYTES_PER_SAMPLE) {
-                take = queued / BYTES_PER_SAMPLE;
-            }
-            queued -= (unsigned) (take * BYTES_PER_SAMPLE);
-            out->consumed += (long long) take;
-        }
-
-        opened = queued;
-        ran_dry = (primed && opened == 0) ? 1u : 0u;
-        if (ran_dry) {
-            out->dry++;
-        }
-
-        /* The pump learns from this interval and refills for the next one. */
-        floor_bytes = portAudioPaceMinTarget(pump_ms, &cfg);
         if (use_effective) {
             target_eff = portAudioPaceEffectiveTarget(floor_bytes, t.target, &cfg);
         } else {
             target_eff = (floor_bytes > t.target) ? floor_bytes : t.target;
         }
-        /* the same ratchet advance either way, so the comparison is honest */
+        cap_eff = portAudioPaceCap(target_eff, &cfg);
+
+        if (refill_first) {
+            /* simulate()'s shape: measure the depth, top it up, and only then
+             * let the device play. The queue is never empty on arrival. */
+            opened = queued;
+            out->rendered += jitterRefill(&c, &queued, pump_ms, target_eff, cap_eff);
+        } else {
+            /* the pump's real shape: the interval has already elapsed and the
+             * device has already played, so this is the depth the pump sees. */
+            jitterDrain(&queued, pump_ms, &consumed_acc, &out->consumed);
+            opened = queued;
+        }
+
+        ran_dry = (primed && opened == 0) ? 1u : 0u;
+        if (ran_dry) {
+            out->dry++;
+        }
+        /* the same ratchet advance in both arms, so the comparison is honest */
         t.target = portAudioPaceTargetStep(&t, (int) ran_dry, 0, &cfg);
 
-        cap_eff = portAudioPaceCap(target_eff, &cfg);
-        while (1) {
-            unsigned n = portAudioPaceFrame(&c, pump_ms, queued, target_eff, 1, &cfg);
-            unsigned bytes;
-
-            if (n == 0) {
-                break;
-            }
-            bytes = n * BYTES_PER_SAMPLE;
-            if (queued + bytes > cap_eff) {
-                break;
-            }
-            queued += bytes;
-            out->rendered += n;
+        if (refill_first) {
+            jitterDrain(&queued, pump_ms, &consumed_acc, &out->consumed);
+        } else {
+            out->rendered += jitterRefill(&c, &queued, pump_ms, target_eff, cap_eff);
         }
+
         if (!primed && queued > 0) {
             primed = 1;
         }
@@ -835,9 +866,9 @@ static void test_jitter_at_low_frame_rate(void)
 
     /* 870 ms pumps, every fifth 940 ms: a 70 ms overrun, which is ordinary
      * frame-to-frame variance at this rate and well under the 116 ms the
-     * ratchet is allowed to learn. */
-    simulate_jitter(870u, 5u, 940u, 120u, 0, &legacy);
-    simulate_jitter(870u, 5u, 940u, 120u, 1, &fixed);
+     * ratchet is allowed to learn. The game's order, both arms. */
+    simulate_jitter(870u, 5u, 940u, 120u, 0, 0, &legacy);
+    simulate_jitter(870u, 5u, 940u, 120u, 1, 0, &fixed);
 
     /* The defect: the ratchet is masked by the floor, so every spike starves. */
     CHECK(legacy.dry >= 20);
@@ -851,6 +882,38 @@ static void test_jitter_at_low_frame_rate(void)
     CHECK(fixed.max_bytes <= portAudioPaceEffectiveTarget(
                                  portAudioPaceMinTarget(940u, &cfg), TARGET_MAX, &cfg)
                              + MAX_FRAME * BYTES_PER_SAMPLE);
+}
+
+/* The harness's ORDER is itself a claim, and for three passes it was the wrong
+ * one.
+ *
+ * simulate() refills to the target and then lets the device drain, so the queue
+ * is always topped up before it can be emptied: starvation is unobservable at
+ * any frame rate, under any jitter, with any target rule. The pump does the
+ * opposite - it is called after the interval has elapsed and the device has
+ * already played - so the depth it measures is the post-drain one.
+ *
+ * Both arms below use the SAME policy and the same jitter; only the order
+ * differs. That is the whole finding, and it is why the ratchet defect survived
+ * every test that existed.
+ *
+ * Keep this case even after every harness pumps in the game's order: it is the
+ * evidence for why the order matters, and it fails loudly if someone reintroduces
+ * refill-first as an optimisation. */
+static void test_harness_order_decides_whether_a_starve_is_visible(void)
+{
+    SimResult refillFirst, gameOrder;
+
+    simulate_jitter(870u, 5u, 940u, 120u, 0, 1, &refillFirst); /* simulate()'s shape */
+    simulate_jitter(870u, 5u, 940u, 120u, 0, 0, &gameOrder);   /* the game's shape */
+
+    /* Topped up before it can empty: the loss is invisible. */
+    CHECK(refillFirst.dry == 0);
+    /* The real order sees it, and the pre-fix rule loses on every spike. */
+    CHECK(gameOrder.dry >= 20);
+
+    /* Same policy, same jitter, same length - the order alone is the difference. */
+    CHECK(gameOrder.dry > refillFirst.dry);
 }
 
 int main(void)
@@ -881,6 +944,7 @@ int main(void)
     test_simulation_survives_a_stall_between_pumps();
     test_effective_target_adds_the_ratchet_on_top();
     test_jitter_at_low_frame_rate();
+    test_harness_order_decides_whether_a_starve_is_visible();
 
     printf("audio_pace: all checks passed\n");
     return 0;
