@@ -20,10 +20,11 @@ is documentation that depends on Task A's outcome for one of its sections.
 
 ## 0. State you are inheriting
 
-Branch `audio-pump-wallclock_gen4`, **14 commits** on top of `3a1ab62`, tip
-`df881c9`:
+Branch `audio-pump-wallclock_gen4`, **15 commits** on top of `3a1ab62`, tip
+`f04d421`:
 
 ```
+f04d421  tests: keep the harnesses, and keep them where they survive
 df881c9  audio: let the underrun ratchet reach the queue below 8.6 fps
 ef16465  docs: the state of play, as the next session's entry point
 17bf80b  frametiming: let the stall cap yield to a hardware-pacing hold (D5)
@@ -151,7 +152,7 @@ Two second-order problems follow from the same blind spot:
   `pump_ms = ms_acc / fps` (`:462`), so a run at 60 fps has 17 ms every pump
   forever. A pump that measures the interval just elapsed and refills for it
   cannot starve on an even cadence even in the correct order. This is why the
-  branch's ratchet defect (below) survived 22 passing cases.
+  branch's ratchet defect (below) survived every passing case.
 - **`ms_acc/fps` is not jitter.** For fps values that do not divide 1000 the
   intervals alternate by 1 ms (3 fps → 333/334). That is arithmetic, not
   coverage. Do not count it.
@@ -168,12 +169,17 @@ reasoning, not by the suite**, and the suite's silence was structural.
 
 Three steps, in order. Do not skip to the third.
 
-**Step 1 — make the order faithful.** Change `simulate()` so each iteration
-drains the interval *before* measuring the resulting queue depth and refilling.
-`simulate_jitter()` (`:711`, added last session) already does it this way; the
-two should not disagree, and having two harnesses with different physics is
-itself a hazard — prefer to fold them into one, or state in a comment exactly
-why two exist.
+**Step 1 — make the order faithful.** `simulate()` (`:435`) still refills
+*before* draining. Change it so each iteration drains the interval first,
+measures the resulting depth, and then refills.
+
+`simulate_jitter()` (`:758`) already has both orders: it takes a `refill_first`
+switch, and `test_harness_order_decides_whether_a_starve_is_visible` drives the
+two against each other. That case is the *evidence* that the order matters, not
+a fix to `simulate()` — so the primary harness is still refill-first today, and
+that is the thing to change. Having two harnesses with different physics is
+itself a hazard: prefer to fold them into one once `simulate()` is faithful, or
+state in a comment exactly why two exist.
 
 Then run the suite. Expect the constant-interval cases to still pass — at a
 constant interval the drain is covered by the target by construction, so
@@ -257,9 +263,15 @@ orders that make Task A worth doing, and put the numbers in the commit message:
 2. The game's order + jitter + the *old* `max(ratcheted, floor)` rule → starves.
 3. The game's order + jitter + the *current* rule → mostly survives.
 
+(1) and the contrast with (2) are already asserted by
+`test_harness_order_decides_whether_a_starve_is_visible`, which is committed and
+runs under `ctest` — so this is a case to keep, not to write. Re-derive the
+numbers yourself for the commit message rather than quoting this document: the
+measured values at 1 fps with every fifth pump at 940 ms were `dry=0` for
+refill-first and `dry=24` for the game's order, under the old rule.
+
 If (1) does not reproduce, you are looking at different code than this document
-describes and should stop and say so. If you build (2) and (3) from the shipped
-functions with a flag, that harness is the deliverable, not a scratch file.
+describes and should stop and say so.
 
 ### 2.5 Output
 
@@ -424,7 +436,7 @@ one shape of input, reported as the mechanism working.**
 - The F3-A first cut passed because this machine's `midas.ini` lists `maxfps`
   above `tickhz`; reversed, it was still broken.
 - The F3-A first cut was caught by the *user* reading the diff, not by a test.
-- The ratchet defect survived 22 passing cases because every one of them pumped
+- The ratchet defect survived every passing case because every one of them pumped
   at a constant interval.
 - And the harness itself models the pump in the wrong order, which is why it
   could not have caught it even with jitter.
@@ -468,7 +480,7 @@ what its output can and cannot tell you.
 The last session got this wrong twice: an order-sensitivity harness was written
 in `build_macos/` and deleted, so the measurement behind §2.1 had to be redone;
 and a log analyser went through three separate wrong verdicts before it was
-reduce to reporting facts and stating its own limits. Both are now in the tree —
+reduced to reporting facts and stating its own limits. Both are now in the tree —
 `port/tests/audio_pace.c`'s
 `test_harness_order_decides_whether_a_starve_is_visible` and
 `scripts/port/audio_pump_log.py` — and the analyser's header records the three

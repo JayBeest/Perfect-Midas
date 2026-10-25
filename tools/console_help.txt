@@ -287,10 +287,11 @@ THE HITCH LINE
 
   credit a of b   The stall cap fired. A tick measured b fields of elapsed
             time and was allowed to advance a. Its presence means simulated
-            time was dropped - b minus a fields of it - and a here is the
-            default cap of 8. This is the per-frame evidence of the game
-            running in slow motion; f/s shows the same loss only afterwards,
-            averaged away. Absent from the line means no time was dropped.
+            time was dropped - b minus a fields of it - and a is the cap that
+            applied: normally 8, the default. This is the per-frame evidence of
+            the game running in slow motion; f/s shows the same loss only
+            afterwards, averaged away. Absent from the line means no time was
+            dropped.
 
   pacer asked n   Hardware pacing only (Max FPS -1): the fields the N64 would
             have needed to draw the frame, which the game then waits for. It

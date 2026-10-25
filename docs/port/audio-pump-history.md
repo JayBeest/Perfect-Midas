@@ -253,7 +253,7 @@ granularity instead of sample granularity.
 | Absorbs device clock drift | no | no | partly | yes (by dropping frames) | yes (by refill depth) |
 | Over-full queue handled by | n/a (cap) | discard rendered frame | n/a (exclusive authority) | **discard whole field frame** | never over-fills |
 | Multi-driver / retry / reopen | no | retry + reopen | retry + reopen | retry + backoff + all drivers | same as Gen 3 |
-| Pacing rules tested | no | no | yes (`audio_pace.c`) | no | **yes (`audio_pace.c`, 16 cases)** |
+| Pacing rules tested | no | no | yes (`audio_pace.c`) | no | **yes (`audio_pace.c`, 23 cases)** |
 | In `main` | yes | no | no | yes (1.0.2b) | this branch |
 
 ---
@@ -510,7 +510,7 @@ holding an unbounded backlog.
 - `port/src/audio_pace.c` — the policy: `portAudioPaceRefill` (device-paced),
   `portAudioPaceFrame` (both paths), `portAudioPaceMinTarget`, the target ratchet
   and the drain watchdog. `port/include/audio_pace.h` documents why.
-- `port/tests/audio_pace.c` — 22 cases, including the two hardware-only bugs,
+- `port/tests/audio_pace.c` — 23 cases, including the two hardware-only bugs,
   single-digit frame rates down to 1 fps.
 - `src/audi.c:336-360` — `amCreateAudioManager`, `g_FrameSize = 736`.
 - `src/audi.c:529` — the vanilla buffer-feedback frame sizing that the port lost.

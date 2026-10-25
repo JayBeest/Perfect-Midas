@@ -1,6 +1,6 @@
 # The audio-pump branch: state of play
 
-Branch `audio-pump-wallclock_gen4`, base `3a1ab62`, **12 commits**. This is the
+Branch `audio-pump-wallclock_gen4`, base `3a1ab62`, **15 commits**. This is the
 entry point for the next session: what the branch set out to do, what is fixed,
 what is not, and which claims rest on measurement rather than inference.
 
@@ -270,7 +270,7 @@ conclusion about frame rates above 60.
 
 ## 5. Documentation map
 
-The five places that describe the same behaviour overlap on purpose and drift
+The six places that describe the same behaviour overlap on purpose and drift
 apart when one moves alone. Touch one, check the rest:
 
 - `tools/console_help.txt` — the in-game console and the log legend. Sections
@@ -281,7 +281,14 @@ apart when one moves alone. Touch one, check the rest:
 - `docs/port/tick-and-field-accounting.md` — the design record.
 - `docs/port/tps-the-lie.md` — the original overlay argument; the historical
   record of why `TPS` went away.
+- `docs/port/audio-pump-history.md` — the pump's generations and its own defect
+  history, including §9 on the ratchet.
 - `docs/port/audio-pump-audit-pass3.md` — the audit and its §6 post-fix numbers.
+
+Counts and commit numbers in these pages rot on every commit. Prefer "the
+commits that did X" to a total; where a count is load-bearing it is stated once,
+here, and should be derived from `git rev-list --count 3a1ab62..HEAD` rather
+than copied forward.
 
 The branch's own history says **every pass fixed real defects and introduced at
 least one of its own**. Anyone doing the next pass should write their findings
