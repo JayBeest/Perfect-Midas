@@ -13,6 +13,7 @@
 #include <ultra64.h>
 #include "port_options.h"
 #include "boot_flags.h"   /* the -n64_aa / -audio_pump / -audio_log parse */
+#include "video_env.h"     /* the env overrides that can contradict a mode */
 
 #ifdef GE_XBOX
 /* No SDL on the console: the string/keyboard/thread stand-ins live in the
@@ -4945,7 +4946,7 @@ static void videoApplyBootArgs(void)
      * Classic Mode was already on - from n64_aa=1 in midas.ini, or from a Tab
      * press in a previous session - which is the case a reader is least likely
      * to have in mind. */
-    if (portVideoN64AaOn() && getenv("GE_TICKHZ") != NULL)
+    if (portEnvTickClash(portVideoN64AaOn(), getenv("GE_TICKHZ") != NULL))
     {
         portConLogf("ge: video: Classic Mode with GE_TICKHZ set - the tick rate is "
                     "GE_TICKHZ's, not hw pacing's 60, and holds are still priced.\n");
@@ -5012,23 +5013,20 @@ s32 videoInit(void)
        * half-applied mode the GE_N64AA block above was moved to remove. */
         extern char *getenv(const char *);
         const char *e = getenv("GE_ROOMCACHE");
-        if (e != NULL)
         {
-            s_CfgRoomCache = SDL_atoi(e);
-            if (s_CfgRoomCache < 0 || s_CfgRoomCache > 2) s_CfgRoomCache = 0;
-            /* hw pacing owns room_cache: the fill model reads the
-             * interpreter's triangles, so the loader forces it off when it
-             * meets tickhz=hw. A knob that turned it back on HERE would
-             * restore the one combination the rest of the file refuses - and
-             * "tickhz=hw - room_cache forced 0" has already been and gone by
-             * this point. Permitted to try, never silent about failing. */
-            if (s_CfgTickHz == -1 && s_CfgRoomCache != 0)
+            const PortEnvRoomCache rc = portEnvRoomCache(e != NULL, (e != NULL) ? SDL_atoi(e) : 0,
+                                                         s_CfgTickHz == -1);
+
+            if (rc.touched)
             {
-                portConLogf("ge: video: GE_ROOMCACHE=%d ignored - tickhz=hw forces room_cache 0 "
-                            "(the fill model reads the interpreter's triangles)\n", s_CfgRoomCache);
-                s_CfgRoomCache = 0;
+                if (rc.refused)
+                {
+                    portConLogf("ge: video: GE_ROOMCACHE=%s ignored - tickhz=hw forces room_cache 0 "
+                                "(the fill model reads the interpreter's triangles)\n", e);
+                }
+                s_CfgRoomCache = rc.value;
+                portRoomCacheSetMode(s_CfgRoomCache);
             }
-            portRoomCacheSetMode(s_CfgRoomCache);
         }
         e = getenv("GE_TRIHOIST");
         if (e != NULL)
@@ -5171,13 +5169,11 @@ s32 videoInit(void)
         if (e != NULL)
         {
             s_MipmapsEnv = SDL_atoi(e) != 0;
-            /* Mipmaps belong to Classic Mode (videoMipmapMode), so this knob
-             * can contradict a mode that reports itself on - the same
-             * half-applied shape as GE_N64AA=0 with -n64_aa, which 4ece424
-             * fixed. The knob is a diagnostic and still wins; it just does not
-             * win silently, and it is the only way to see the contradiction,
-             * since nothing else logs the mipmap mode. */
-            if (s_CfgN64Aa && portClassicPart(CLASSIC_PART_MIPMAPS) && s_MipmapsEnv == 0)
+            /* Mipmaps belong to Classic Mode, so this knob can contradict a mode
+             * that reports itself on. It still wins - it is a diagnostic - but it
+             * does not win silently. Nothing else logs the mipmap mode, so this
+             * line is the only way to see the contradiction. */
+            if (portEnvMipmapClash(s_CfgN64Aa, portClassicPart(CLASSIC_PART_MIPMAPS), s_MipmapsEnv))
             {
                 portConLogf("ge: video: GE_HWMIPMAPS=0 with Classic Mode on - mipmaps off "
                             "for this run, though Classic Mode turns them on\n");
