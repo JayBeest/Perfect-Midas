@@ -4,11 +4,17 @@
 /*
  * The three diagnostic boot flags, as a pure parse.
  *
- *   ProjectMidas -n64_aa -audio_pump -audio_log
+ *   ProjectMidas -classic -audio_pump -audio_log
  *
  * Each is independent and mix-and-match. Nothing here touches the engine, SDL,
  * a clock or a file: the caller passes the argument vector and gets back three
- * booleans. video.c acts on them; port/tests/boot_flags.c drives them.
+ * booleans (plus the spelling of the one that has two, for the log line).
+ * video.c acts on them; port/tests/boot_flags.c drives them.
+ *
+ * -classic and -n64_aa are THE SAME FLAG. -n64_aa was its only spelling until
+ * the Phase 3 key split, when 'n64_aa' stopped meaning Classic Mode and became
+ * the AA bit; the old spelling is kept as a silent alias so no script, capture
+ * run or muscle memory breaks, and -classic is what new writing should use.
  *
  * WHY THIS IS ITS OWN FILE AND NOT SIX LINES IN video.c
  *
@@ -35,9 +41,17 @@
  */
 
 typedef struct {
-    int n64_aa;     /* -n64_aa: start in Classic Mode (what the Tab key toggles) */
+    int classic;    /* -classic (alias -n64_aa): start in Classic Mode, the
+                     * preset - what the classic_toggle key toggles, not the
+                     * AA bit, which the preset sets through its own part */
     int audio_pump; /* -audio_pump: draw the cl_audio_pump block                */
     int audio_log;  /* -audio_log: write Data/Logs/audio_pump.log               */
+    /* The token that set `classic`, or NULL. For the log line only, and only so
+     * it can name the spelling the caller actually typed: a launch that says
+     * "-n64_aa -> Classic Mode on" when the command line said -classic would be
+     * the same defect as a flag that silently does nothing. Not owned - it
+     * points into argv, which outlives this. */
+    const char *classic_spelling;
 } PortBootFlags;
 
 /*

@@ -14,6 +14,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "boot_flags.h"
 
@@ -33,7 +34,7 @@ static void no_flags(void)
     PortBootFlags f;
 
     parse(&f, 1, argv);
-    CHECK(f.n64_aa == 0);
+    CHECK(f.classic == 0);
     CHECK(f.audio_pump == 0);
     CHECK(f.audio_log == 0);
 }
@@ -46,15 +47,15 @@ static void each_alone(void)
 
     { char *argv[] = { (char *) "P", (char *) "-n64_aa", NULL };
       parse(&f, 2, argv);
-      CHECK(f.n64_aa == 1); CHECK(f.audio_pump == 0); CHECK(f.audio_log == 0); }
+      CHECK(f.classic == 1); CHECK(f.audio_pump == 0); CHECK(f.audio_log == 0); }
 
     { char *argv[] = { (char *) "P", (char *) "-audio_pump", NULL };
       parse(&f, 2, argv);
-      CHECK(f.n64_aa == 0); CHECK(f.audio_pump == 1); CHECK(f.audio_log == 0); }
+      CHECK(f.classic == 0); CHECK(f.audio_pump == 1); CHECK(f.audio_log == 0); }
 
     { char *argv[] = { (char *) "P", (char *) "-audio_log", NULL };
       parse(&f, 2, argv);
-      CHECK(f.n64_aa == 0); CHECK(f.audio_pump == 0); CHECK(f.audio_log == 1); }
+      CHECK(f.classic == 0); CHECK(f.audio_pump == 0); CHECK(f.audio_log == 1); }
 }
 
 /* The command the flags exist for. */
@@ -65,7 +66,7 @@ static void all_three(void)
     PortBootFlags f;
 
     parse(&f, 4, argv);
-    CHECK(f.n64_aa == 1);
+    CHECK(f.classic == 1);
     CHECK(f.audio_pump == 1);
     CHECK(f.audio_log == 1);
 }
@@ -77,11 +78,11 @@ static void subset_and_order(void)
 
     { char *argv[] = { (char *) "P", (char *) "-audio_log", (char *) "-n64_aa", NULL };
       parse(&f, 3, argv);
-      CHECK(f.n64_aa == 1); CHECK(f.audio_pump == 0); CHECK(f.audio_log == 1); }
+      CHECK(f.classic == 1); CHECK(f.audio_pump == 0); CHECK(f.audio_log == 1); }
 
     { char *argv[] = { (char *) "P", (char *) "-audio_pump", (char *) "-audio_log", NULL };
       parse(&f, 3, argv);
-      CHECK(f.n64_aa == 0); CHECK(f.audio_pump == 1); CHECK(f.audio_log == 1); }
+      CHECK(f.classic == 0); CHECK(f.audio_pump == 1); CHECK(f.audio_log == 1); }
 }
 
 /* One or two dashes, either name separator, either case. */
@@ -90,7 +91,7 @@ static void spelling_variants(void)
     PortBootFlags f;
 
     { char *argv[] = { (char *) "P", (char *) "--n64_aa", NULL };
-      parse(&f, 2, argv); CHECK(f.n64_aa == 1); }
+      parse(&f, 2, argv); CHECK(f.classic == 1); }
 
     { char *argv[] = { (char *) "P", (char *) "-audio-pump", NULL };
       parse(&f, 2, argv); CHECK(f.audio_pump == 1); }
@@ -99,10 +100,50 @@ static void spelling_variants(void)
       parse(&f, 2, argv); CHECK(f.audio_log == 1); }
 
     { char *argv[] = { (char *) "P", (char *) "-N64_AA", NULL };
-      parse(&f, 2, argv); CHECK(f.n64_aa == 1); }
+      parse(&f, 2, argv); CHECK(f.classic == 1); }
 
     { char *argv[] = { (char *) "P", (char *) "-N64-AA", NULL };
-      parse(&f, 2, argv); CHECK(f.n64_aa == 1); }
+      parse(&f, 2, argv); CHECK(f.classic == 1); }
+
+    { char *argv[] = { (char *) "P", (char *) "--classic", NULL };
+      parse(&f, 2, argv); CHECK(f.classic == 1); }
+
+    { char *argv[] = { (char *) "P", (char *) "-CLASSIC", NULL };
+      parse(&f, 2, argv); CHECK(f.classic == 1); }
+}
+
+/* -classic and -n64_aa are ONE flag: the Phase 3 key split gave the mode an
+ * honest name, and the old spelling stays as a silent alias so no script or
+ * capture run breaks. The recorded spelling exists only so the log line names
+ * what the caller typed - a launch that printed "-n64_aa ->" for -classic
+ * would be the same defect as a flag that silently does nothing. */
+static void classic_has_two_spellings(void)
+{
+    PortBootFlags f;
+
+    { char *argv[] = { (char *) "P", (char *) "-classic", NULL };
+      parse(&f, 2, argv);
+      CHECK(f.classic == 1);
+      CHECK(f.classic_spelling != NULL && strcmp(f.classic_spelling, "-classic") == 0); }
+
+    { char *argv[] = { (char *) "P", (char *) "-n64_aa", NULL };
+      parse(&f, 2, argv);
+      CHECK(f.classic == 1);
+      CHECK(f.classic_spelling != NULL && strcmp(f.classic_spelling, "-n64_aa") == 0); }
+
+    /* given both: still one flag, not a count */
+    { char *argv[] = { (char *) "P", (char *) "-classic", (char *) "-n64_aa", NULL };
+      parse(&f, 3, argv); CHECK(f.classic == 1); }
+
+    /* absent: NULL, so nothing can report a spelling for a flag nobody gave */
+    { char *argv[] = { (char *) "P", NULL };
+      parse(&f, 1, argv);
+      CHECK(f.classic == 0); CHECK(f.classic_spelling == NULL); }
+
+    /* -classic_mode is the INI KEY's name, not a flag. The end-anchored match
+     * must not read it as -classic plus a suffix. */
+    { char *argv[] = { (char *) "P", (char *) "-classic_mode", NULL };
+      parse(&f, 2, argv); CHECK(f.classic == 0); }
 }
 
 /* A bare word is NOT a flag: the first bare argument is the drag-and-drop ROM
@@ -115,7 +156,7 @@ static void bare_word_is_not_a_flag(void)
       parse(&f, 2, argv); CHECK(f.audio_pump == 0); }
 
     { char *argv[] = { (char *) "P", (char *) "n64_aa", NULL };
-      parse(&f, 2, argv); CHECK(f.n64_aa == 0); }
+      parse(&f, 2, argv); CHECK(f.classic == 0); }
 }
 
 /* Unknown flags are ignored, not errors - and must not partially match. */
@@ -131,18 +172,18 @@ static void unknown_and_prefix(void)
       parse(&f, 2, argv); CHECK(f.audio_pump == 0); }
 
     { char *argv[] = { (char *) "P", (char *) "-n64", NULL };
-      parse(&f, 2, argv); CHECK(f.n64_aa == 0); }
+      parse(&f, 2, argv); CHECK(f.classic == 0); }
 
     { char *argv[] = { (char *) "P", (char *) "-n64_aaa", NULL };
-      parse(&f, 2, argv); CHECK(f.n64_aa == 0); }
+      parse(&f, 2, argv); CHECK(f.classic == 0); }
 
     /* The one spelling deliberately not accepted: no `=value` form. Ignored,
      * like any other unknown flag. */
     { char *argv[] = { (char *) "P", (char *) "-n64_aa=1", NULL };
-      parse(&f, 2, argv); CHECK(f.n64_aa == 0); }
+      parse(&f, 2, argv); CHECK(f.classic == 0); }
 
     { char *argv[] = { (char *) "P", (char *) "-", NULL };
-      parse(&f, 2, argv); CHECK(f.n64_aa == 0); }
+      parse(&f, 2, argv); CHECK(f.classic == 0); }
 
     { char *argv[] = { (char *) "P", (char *) "--", NULL };
       parse(&f, 2, argv); CHECK(f.audio_pump == 0); }
@@ -156,10 +197,10 @@ static void beside_a_rom_path(void)
 
     { char *argv[] = { (char *) "P", (char *) "--rom-file", (char *) "/tmp/x.n64",
                        (char *) "-audio_pump", NULL };
-      parse(&f, 4, argv); CHECK(f.audio_pump == 1); CHECK(f.n64_aa == 0); }
+      parse(&f, 4, argv); CHECK(f.audio_pump == 1); CHECK(f.classic == 0); }
 
     { char *argv[] = { (char *) "P", (char *) "-n64_aa", (char *) "/tmp/x.n64", NULL };
-      parse(&f, 3, argv); CHECK(f.n64_aa == 1); CHECK(f.audio_pump == 0); }
+      parse(&f, 3, argv); CHECK(f.classic == 1); CHECK(f.audio_pump == 0); }
 
     /* A path that happens to contain a flag name is not a flag. */
     { char *argv[] = { (char *) "P", (char *) "/carts/audio_pump.n64", NULL };
@@ -169,14 +210,17 @@ static void beside_a_rom_path(void)
 /* Parse writes every field, so a caller may reuse the struct without clearing. */
 static void parse_clears_previous_state(void)
 {
-    char *yes[] = { (char *) "P", (char *) "-n64_aa", (char *) "-audio_log", NULL };
+    char *yes[] = { (char *) "P", (char *) "-classic", (char *) "-audio_log", NULL };
     char *no[]  = { (char *) "P", NULL };
     PortBootFlags f;
 
     parse(&f, 3, yes);
-    CHECK(f.n64_aa == 1 && f.audio_log == 1);
+    CHECK(f.classic == 1 && f.audio_log == 1);
     parse(&f, 1, no);
-    CHECK(f.n64_aa == 0 && f.audio_pump == 0 && f.audio_log == 0);
+    CHECK(f.classic == 0 && f.audio_pump == 0 && f.audio_log == 0);
+    /* the spelling too, or a reused struct would name the previous launch's
+     * flag in the log line */
+    CHECK(f.classic_spelling == NULL);
 }
 
 /* The known-flag test the logging uses. Its whole purpose is that it cannot
@@ -185,6 +229,8 @@ static void parse_clears_previous_state(void)
 static void known_flags(void)
 {
     /* the three this file parses */
+    CHECK(portBootFlagKnown("-classic"));
+    CHECK(portBootFlagKnown("--classic"));
     CHECK(portBootFlagKnown("-n64_aa"));
     CHECK(portBootFlagKnown("--n64_aa"));
     CHECK(portBootFlagKnown("-audio_pump"));
@@ -206,6 +252,7 @@ static void known_flags(void)
     CHECK(!portBootFlagKnown("--rom"));
     CHECK(!portBootFlagKnown("--langs=jp"));
     CHECK(!portBootFlagKnown("-n64_aa=1"));   /* not acted on, and not known */
+    CHECK(!portBootFlagKnown("-classic_mode")); /* the ini key is not a flag */
     CHECK(!portBootFlagKnown("audio_pump"));   /* bare word: the ROM path slot */
     CHECK(!portBootFlagKnown("-"));
     CHECK(!portBootFlagKnown("--"));
@@ -220,6 +267,7 @@ int main(void)
     all_three();
     subset_and_order();
     spelling_variants();
+    classic_has_two_spellings();
     bare_word_is_not_a_flag();
     unknown_and_prefix();
     beside_a_rom_path();

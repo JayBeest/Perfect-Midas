@@ -159,23 +159,32 @@ has to be typed into the console.
 
 | Flag | Effect |
 | --- | --- |
-| `-n64_aa` | Start in **Classic Mode** — the same thing the `classic_toggle` key does (Tab by default). That is 240p, `maxfps=-1` (hardware pacing), 4× MSAA, the 4:3 pillars and the classic filter, all of it, not just the AA bit. |
+| `-classic` | Start in **Classic Mode** — the same thing the `classic_toggle` key does (Tab by default). That is 240p, `maxfps=-1` (hardware pacing), 4× MSAA, the 4:3 pillars and the classic filter, all of it, not just the AA bit. `-n64_aa` is the **same flag**, kept as an alias. |
 | `-audio_pump` | Draw the `cl_audio_pump` block from the first frame, in menus and cutscenes too. |
 | `-audio_log` | Write `Data/Logs/audio_pump.log`, one line a second. |
 
 ```bash
-./ProjectMidas -n64_aa -audio_pump -audio_log      # everything at once
+./ProjectMidas -classic -audio_pump -audio_log    # everything at once
 ./ProjectMidas -audio_pump                        # just the block
-./ProjectMidas -n64_aa -audio_log                 # classic mode, log to file
+./ProjectMidas -classic -audio_log                # classic mode, log to file
+./ProjectMidas -n64_aa -audio_log                 # same as the line above
 ```
 
-**Spelling.** One or two dashes, either case, and `-` or `_` as the separator: `-n64_aa`, `--n64_aa`, `-N64-AA` and `-n64-aa` are all the same flag. There is no
-`=value` form — `-n64_aa=1` is ignored like any unknown argument.
+**`-classic` and `-n64_aa` are one flag.** The mode was called `n64_aa` because
+it used to be the same ini key as the AA bit; the two are separate settings now
+(`[display] classic_mode` and `[display] n64_aa`, see `SETTINGS.md`), so the
+flag has an honest name and the old spelling keeps working. The log names
+the spelling you typed.
+
+**Spelling.** One or two dashes, either case, and `-` or `_` as the separator:
+`-classic`, `--classic`, `-CLASSIC`, `-n64_aa`, `--n64_aa`, `-N64-AA` and
+`-n64-aa` are all the same two flags. There is no `=value` form —
+`-n64_aa=1` and `-classic=1` are ignored like any unknown argument.
 
 **A leading dash is required.** A bare `audio_pump` is *not* a flag, because a
 bare first argument is the drag-and-drop ROM path and must not be eaten.
 
-**`-n64_aa` writes `midas.ini`**, exactly as pressing Tab does, so the mode
+**`-classic` writes `midas.ini`**, exactly as pressing Tab does, so the mode
 persists after you quit. Add `GE_NOINISAVE=1` for a run that must leave your file
 alone; the parts still apply for that session. It is idempotent — launching twice
 with the flag does not overwrite the saved pre-Classic-Mode values a second time,
@@ -185,15 +194,21 @@ and the second launch leaves the file byte-identical.
 *before* these flags, so an explicit flag wins. Two combinations are worth
 knowing:
 
-- **`GE_N64AA=0 -n64_aa`** — Classic Mode is ON, fully applied (`low_res=240`,
+- **`GE_N64AA=0 -classic`** — Classic Mode is ON, fully applied (`low_res=240`,
   `maxfps=-1`, MSAA 2×). The flag wins. This combination used to leave Classic
   Mode's settings forced with the mode reported *off*, because `GE_N64AA` was read
   after the flag; it is why the env pass now runs first.
-- **`GE_TICKHZ=120 -n64_aa`** — permitted, but it is not a documented mode:
+- **`GE_TICKHZ=120 -classic`** — permitted, but it is not a documented mode:
   `GE_TICKHZ` wins the tick rate while hardware pacing still prices its holds, so
   the sim ticks at 120 Hz under a hold sized for 60. The run says so in its log
   rather than doing it silently. Do not use both unless you are measuring exactly
   that.
+
+**`GE_N64AA` sets the AA bit and nothing else.** Before the keys were split it
+forced Classic Mode, because it and the mode were the same setting; now it turns
+on `[display] n64_aa` (N64 edge blending) and leaves `classic_mode` where the ini
+left it. Use `-classic` for the mode — it is the flag that says so, and it is the
+only one that applies the preset.
 
 Unknown flags are ignored rather than rejected, and any argument starting with `-`
 that matches nothing known is named in the log (`ignoring argument '-foo'`). The

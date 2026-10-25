@@ -1,5 +1,6 @@
 #!/bin/bash
-# Eight-second live tests for the boot flags: -n64_aa, -audio_pump, -audio_log.
+# Eight-second live tests for the boot flags: -classic (alias -n64_aa),
+# -audio_pump, -audio_log.
 #
 # Each case starts the real renderer (no headless build, no ROM-free stub) for
 # eight seconds in the FRONT END - no GE_STAGE, so the legal screen, the logos
@@ -52,6 +53,7 @@
 #   audio_log   the file appears and gains lines            (log, checkable)
 #   n64_aa      Classic Mode reports applied, and the config line that follows
 #               shows low_res=240 / maxfps=-1               (log, checkable)
+#   all         the same as n64_aa but through -classic, the flag's new spelling
 #   audio_pump  the block is DRAWN                          (PIXELS ONLY)
 #   eyeball_*   a capture exists, and the log agrees        (the SCREEN is yours)
 # The pixel cases cannot be grepped: the block is geometry in a display list.
@@ -192,8 +194,11 @@ for name in ${cases//,/ }; do
         baseline)   args="" ;;
         audio_pump) args="-audio_pump" ;;
         audio_log)  args="-audio_log";  want_log=1 ;;
-        n64_aa)     args="-n64_aa" ;;
-        all)        args="-n64_aa -audio_pump -audio_log"; want_log=1 ;;
+        n64_aa)     args="-n64_aa" ;;   # the flag's OLD spelling, kept as an alias
+        # ...and "all" uses the NEW one, so one live run exercises each spelling:
+        # both are asserted on the config line below, which is the only proof
+        # that -classic reaches the same code path -n64_aa does.
+        all)        args="-classic -audio_pump -audio_log"; want_log=1 ;;
         # The two eyes-on cases: same flags as audio_pump, but the display mode
         # is forced and the run is long enough for a person to look. Their
         # assertion is that a capture exists and the log agrees; whether the
@@ -259,10 +264,12 @@ for name in ${cases//,/ }; do
         #
         # These two come from the config line, so they are the state the renderer
         # was actually created in, and they are IDEMPOTENT: a second run starts
-        # already in Classic Mode (the flag writes n64_aa=1), the flag correctly
-        # does nothing, and the config line still reads 240 / -1. The first cut
-        # asserted the log SENTENCE instead and reported a false failure on every
-        # run after the first - non-idempotent against the product's own write.
+        # already in Classic Mode (the flag writes classic_mode=1, and the
+        # preset's classic_n64aa part writes n64_aa=1 beside it), the flag
+        # correctly does nothing, and the config line still reads 240 / -1. The
+        # first cut asserted the log SENTENCE instead and reported a false
+        # failure on every run after the first - non-idempotent against the
+        # product's own write.
         [ "$lowres" = "low_res=240" ] || { status="FAIL (${lowres:-no low_res} in the config line)"; }
         [ "$mfps" = "-1" ] || { status="FAIL (maxfps=${mfps:-none}, want -1)"; }
     fi
@@ -305,8 +312,8 @@ echo "     eyeball_fullscreen  same, fullscreen on display 0"
 echo "     baseline            NO block (the flags are what turns it on)"
 echo "     audio_pump          the block, before any stage has loaded"
 echo "     audio_log           no block, but Data/Logs/audio_pump.log gains lines"
-echo "     n64_aa              no block, 240-line render, 4:3 pillars, maxfps=-1"
-echo "     all                 block present, Classic Mode applied, log writing"
+echo "     n64_aa              no block, 240-line render, 4:3 pillars, maxfps=-1 (-n64_aa)"
+echo "     all                 block present, Classic Mode applied via -classic, log writing"
 echo "   Convert one to look at it:"
 first_shot=$(ls "$outdir"/eyeball_windowed/shot_*.bmp 2>/dev/null | tail -1)
 echo "     sips -s format png ${first_shot:-$outdir/audio_pump/shot_00005.bmp} --out /tmp/x.png"

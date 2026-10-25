@@ -52,16 +52,18 @@ void portBootFlagsParse(int argc, char **argv, PortBootFlags *out)
     if (out == NULL) {
         return;
     }
-    out->n64_aa = 0;
+    out->classic = 0;
     out->audio_pump = 0;
     out->audio_log = 0;
+    out->classic_spelling = NULL;
 
     if (argv == NULL) {
         return;
     }
     for (i = 1; i < argc; i++) {
-        if (portBootFlagIs(argv[i], "n64_aa")) {
-            out->n64_aa = 1;
+        if (portBootFlagIs(argv[i], "classic") || portBootFlagIs(argv[i], "n64_aa")) {
+            out->classic = 1;
+            out->classic_spelling = argv[i];
         } else if (portBootFlagIs(argv[i], "audio_pump")) {
             out->audio_pump = 1;
         } else if (portBootFlagIs(argv[i], "audio_log")) {
@@ -96,9 +98,11 @@ int portBootFlagKnown(const char *arg)
         return 0;
     }
 
-    /* The three this file parses. */
-    if (portBootFlagIs(arg, "n64_aa") || portBootFlagIs(arg, "audio_pump")
-        || portBootFlagIs(arg, "audio_log")) {
+    /* The three this file parses. -classic and -n64_aa are one flag, so both
+     * spellings must be known: reporting the documented one as ignored is the
+     * defect portBootFlagKnown exists to prevent. */
+    if (portBootFlagIs(arg, "classic") || portBootFlagIs(arg, "n64_aa")
+        || portBootFlagIs(arg, "audio_pump") || portBootFlagIs(arg, "audio_log")) {
         return 1;
     }
 

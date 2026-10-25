@@ -4950,10 +4950,13 @@ static void videoIniWritableCheck(void)
 
 /* ---- boot flags: the three things a diagnostic launch always wants --------
  *
- * `ProjectMidas -n64_aa -audio_pump -audio_log` starts in Classic Mode with the
+ * `ProjectMidas -classic -audio_pump -audio_log` starts in Classic Mode with the
  * pump block and the pump log already on, so a capture run needs no console and
  * no ini edit. They are ordinary argument flags, mix-and-match, and each is
- * independent of the others.
+ * independent of the others. `-n64_aa` is the same flag as `-classic`: the mode
+ * was named after the key it used to share with the AA bit, the split gave it
+ * its own, and the old spelling stays as a silent alias so capture scripts and
+ * documented commands keep working.
  *
  * WHY NOT ENV VARS: `-audio_pump`/`-audio_log` are console settings, not ini
  * keys, and the only existing way to set them was GE_CONCMD (a console line at
@@ -4968,7 +4971,7 @@ static PortBootFlags s_BootFlags;
 /* 1 when the flag was given, and the thing it asks for is not already true. */
 s32 videoBootClassicWanted(void)
 {
-    return s_BootFlags.n64_aa && s_CfgClassicMode == 0;
+    return s_BootFlags.classic && s_CfgClassicMode == 0;
 }
 
 s32 videoBootAudioPump(void)
@@ -5046,7 +5049,8 @@ static void videoApplyBootArgs(void)
     if (videoBootClassicWanted())
     {
         portClassicToggle();
-        portConLogf("ge: video: -n64_aa -> Classic Mode on (%s)\n",
+        portConLogf("ge: video: %s -> Classic Mode on (%s)\n",
+                    (s_BootFlags.classic_spelling != NULL) ? s_BootFlags.classic_spelling : "-classic",
                     portClassicModeOn() ? "applied" : "did not apply");
     }
     /* GE_TICKHZ wins the tick rate (portTickHz reads it before everything),

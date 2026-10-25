@@ -180,6 +180,38 @@ cp "$CS" "$W/mut.c"
 run_cs "classic_split" survive
 
 echo
+echo "the boot flags (port/src/boot_flags.c)"
+BF="$ROOT/port/src/boot_flags.c"
+TBF="$ROOT/port/tests/boot_flags.c"
+MUT_SRC="$BF"
+run_bf() {
+    local label="$1" want="$2"
+    cc $CC_BASE "$TBF" "$W/mut.c" -o "$W/t" 2>"$W/cc.log" || { printf '  NOBUILD  %s\n' "$label"; status=1; return; }
+    if "$W/t" >/dev/null 2>&1; then
+        if [ "$want" = "survive" ]; then printf '  ok       %-50s survives (expected)\n' "$label";
+        else printf '  GAP      %-50s SURVIVED - no test kills this\n' "$label"; status=1; fi
+    else
+        if [ "$want" = "kill" ]; then printf '  ok       %-50s killed\n' "$label";
+        else printf '  BROKEN   %-50s the baseline itself fails\n' "$label"; status=1; fi
+    fi
+}
+bf_mutate() {
+    cp "$BF" "$W/mut.c"
+    perl -0pi -e "$1" "$W/mut.c"
+    if cmp -s "$BF" "$W/mut.c"; then printf '  NO-OP    %s\n' "$2"; status=1; return 1; fi
+}
+# The alias is the new name for a shipped flag, so losing it is a silent
+# regression for every command that uses -classic.
+bf_mutate 's/portBootFlagIs\(argv\[i\], "classic"\) \|\| //' "classic: drop the new spelling" && \
+    run_bf "-classic is not a flag" kill
+# ...and the log must name the spelling typed, or a -classic launch reports
+# itself as the old flag - the same defect as one that does nothing.
+bf_mutate 's/            out->classic_spelling = argv\[i\];\n//' "classic: never record the spelling" && \
+    run_bf "the log cannot name the spelling typed" kill
+cp "$BF" "$W/mut.c"
+run_bf "boot_flags" survive
+
+echo
 echo "the seam (port/src/port_options.c)"
 MUT_SRC="$PO"
 # The choke point's key. After the Phase 3 split the preset IS classic_mode, so
@@ -241,6 +273,9 @@ cc $CC_BASE "$TP" "$TF" "$PO" "$CM" -o "$W/b2" 2>/dev/null && "$W/b2" >/dev/null
 cc $CC_BASE "$TCS" "$CS" -o "$W/b3" 2>/dev/null && "$W/b3" >/dev/null 2>&1 && \
     printf '  ok       %-50s passes unmutated\n' "classic_split" || {
     printf '  BROKEN   the unmutated split test fails\n'; status=1; }
+cc $CC_BASE "$TBF" "$BF" -o "$W/b4" 2>/dev/null && "$W/b4" >/dev/null 2>&1 && \
+    printf '  ok       %-50s passes unmutated\n' "boot_flags" || {
+    printf '  BROKEN   the unmutated boot flag test fails\n'; status=1; }
 
 echo
 if [ "$status" -eq 0 ]; then
