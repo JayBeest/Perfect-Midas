@@ -47,12 +47,14 @@ decision.
 
 ## 2. State you are inheriting
 
-Branch `diagnostic-launch-kit`, tip `af6065a`, **19 commits** ahead of `6ef2530`
-and **48** ahead of `3a1ab62`. **Derive the counts, do not trust these numbers:**
+Branch `diagnostic-launch-kit`. **Derive the tip and the counts, do not trust the
+numbers below** — they were correct when written and the branch has moved since:
 
 ```bash
 cd /Users/jcorneli/Developer/DeepSeek/PM-fork
-git rev-list --count 6ef2530..HEAD      # 19 at the time of writing
+git log --oneline -1                    # the tip; it was a8e1fd3
+git rev-list --count 6ef2530..HEAD      # 20 at the time of writing
+git rev-list --count 3a1ab62..HEAD      # 49 at the time of writing
 git log --oneline 6ef2530..HEAD         # read these; each message carries its evidence
 ```
 
