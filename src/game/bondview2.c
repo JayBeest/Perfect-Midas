@@ -12680,6 +12680,8 @@ static Gfx *portDrawAudioPumpStats(Gfx *gdl, s32 x, s32 y)
     char line[6][48];
     s32 rows = 0;
     s32 top = y;
+    s32 tx = x;   /* text origin: the padded block's inside, set below */
+    s32 ty = y;
     s32 i;
 
     portAudioPumpStatsGet(&st);
@@ -12769,11 +12771,19 @@ static Gfx *portDrawAudioPumpStats(Gfx *gdl, s32 x, s32 y)
      *
      * It is sized to the TEXT, not to the view. It used to run to viGetX() and
      * painted a dark band across a third of the picture for six short rows -
-     * visible in the captures, and dead space over a live HUD. The same
-     * measure-then-pad the skip hint below uses: the widest row, two pixels of
-     * air, and the block's own left edge. */
+     * visible in the captures, and dead space over a live HUD.
+     *
+     * The pad is one measured character, not a pixel count: the block sits at
+     * the window corner, so a fixed 2px read as cramped. Measured rather than
+     * taken from SPACE_WIDTH because textMeasure carries port_text_scale, and
+     * the pad has to grow with the glyphs or it collapses at other scales.
+     * The text moves IN by that pad so the corner plate stays where it was;
+     * padding outward instead would push it off the top-left of the screen. */
     {
+        static char padchar[] = "0";   /* textMeasure takes char *, and digits dominate the block */
         s32 maxw = 0;
+        s32 pad = 0;
+        s32 ph = 0;
 
         for (i = 0; i < rows; i++)
         {
@@ -12786,13 +12796,16 @@ static Gfx *portDrawAudioPumpStats(Gfx *gdl, s32 x, s32 y)
                 maxw = lw;
             }
         }
-        gdl = microcode_constructor_related_to_menus(gdl, 0, top - 1, x + maxw + 2,
-                                                     top + rows * PORT_APU_ROW, 0x64);
+        textMeasure(&ph, &pad, padchar, ptrFontBankGothicChars, ptrFontBankGothic, 0);
+        tx = x + pad;
+        ty = top + pad;
+        gdl = microcode_constructor_related_to_menus(gdl, x, top, tx + maxw + pad,
+                                                     top + rows * PORT_APU_ROW + pad, 0x64);
     }
     for (i = 0; i < rows; i++)
     {
-        s32 lx = x;
-        s32 ly = top + i * PORT_APU_ROW;
+        s32 lx = tx;
+        s32 ly = ty + i * PORT_APU_ROW;
 
         /* Same gate the console uses for its rows: a glyph is up to 12 Gfx
          * commands and this block is ~125 of them, far more than the two or
