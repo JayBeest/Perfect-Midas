@@ -3,9 +3,10 @@
  * overlay (console `cl_audio_pump`).
  *
  * The pump in audio_pc.c owns these numbers; the overlay only reads them, so
- * the port keeps no display state here beyond the on/off toggle. FPS and TPS
- * are deliberately NOT in this struct: they belong to the frame-timing code
- * (frametiming.c g_PortStatFps / g_PortStatTps) and the overlay reads those
+ * the port keeps no display state here beyond the on/off toggle. The frame and
+ * tick rates are deliberately NOT in this struct: they belong to the
+ * frame-timing code (frametiming.c g_PortStatFps / g_PortStatTicks /
+ * g_PortStatFieldsX10 / g_PortStatFieldsPerTickX100) and the overlay reads those
  * directly, so a stale copy cannot disagree with the strip above it.
  *
  * UNITS, because getting these wrong is easy: `rendered` and `needed` are

@@ -109,9 +109,26 @@ static s32 portTickCarryOff(void)
 }
 s32 portTickCadence = 1;
 
-/* Written by gfx_sdl2's title-stat pass; read by the show_fps overlay. */
+/* Written by gfx_sdl2's stat pass; read by the show_fps digits and the
+ * cl_audio_pump block. */
 s32 g_PortStatFps = 0;
+/* Computed because the stat pass has always published it, but nothing READS it
+ * any more: the overlay and the log now carry g_PortStatTicks (the real tick
+ * rate) and g_PortStatFieldsX10 (game speed) instead. Its value is
+ * min(tick rate, 60), because lv.c increments g_GlobalTickCount once per tick
+ * that advanced the clock by >= 1 field, so it cannot distinguish 60 Hz from
+ * 120 Hz and it tracks fps when frames overrun a field. Kept rather than
+ * deleted because it belongs to the original import's set of stat globals. */
 s32 g_PortStatTps = 0;
+s32 g_PortStatTicks = 0;
+s32 g_PortStatFieldsX10 = 0;
+s32 g_PortStatFieldsPerTickX100 = 0;
+
+/* Monotonic since boot: the fields credited to the sim. LvlStageLoad zeroes
+ * g_GlobalTickCount (lv.c), so the tick counter cannot be used to measure a
+ * rate across a load - this one is never reset. See the stat pass in
+ * gfx_sdl2.cpp and docs/port/tick-and-field-accounting.md. */
+u32 g_PortFieldsTicked = 0;
 
 /* Counts of real time credited to the field accumulator but not yet worth a
  * whole field. THE carry - see waitForNextFrame. */
@@ -911,6 +928,17 @@ static f32 portHwTakeLoadMs(void)
     sHwLoadMs = 0.0f;
     return ms;
 }
+
+/* The field hold most recently priced, published for the hitch log to READ.
+ *
+ * hitchlog.c runs at present time, which is the RENDER thread when
+ * render_thread=1, so it must not call portHwPaceFields(): that mutates statics
+ * (lastFrame, lastFields) and CONSUMES the pending load charge via
+ * portHwTakeLoadMs, which would both race the game thread and swallow a hitch
+ * the pacer still needed. It is written and read with relaxed atomics for that
+ * reason; a plain int would be a data race, and a torn one would print a
+ * nonsense field count rather than a merely stale one. */
+s32 g_PortHwFieldsHeld = 0;
 s32 portHwPaceFields(void)
 {
     extern char *getenv(const char *);
@@ -945,6 +973,8 @@ s32 portHwPaceFields(void)
         }
         lastFrame = g_PortHwLoadLast.frame;
         lastFields = fields;
+        /* published for the hitch log, which reads it from the render thread */
+        __atomic_store_n(&g_PortHwFieldsHeld, fields, __ATOMIC_RELAXED);
         if (dbg)
         {
             dbgCount++; dbgSumFields += (u32) fields;
@@ -993,6 +1023,15 @@ void updateFrameCounters(s32 deltaFrames)
     lastFrameCounter = currentFrameCounter;
     currentFrameCounter = (s32) (currentFrameCounter + deltaFrames);
     speedgraphframes = deltaFrames;
+#ifndef TARGET_N64
+    /* g_PortFieldsTicked (the stat pass's f/s counter) is NOT advanced here.
+     * deltaFrames is the fields PRODUCED by waitForNextFrame's carry, but what
+     * the simulation is actually credited with is g_ClockTimer after lvlTick's
+     * pause and controls-lock checks, which zero it. Counting here made f/s
+     * read a healthy 60.0 during every pause, because this runs before lvlTick
+     * (boss.c) can decide the tick did not run. It is advanced in lv.c beside
+     * `g_GlobalTimer += g_ClockTimer`, so the two are equal by construction. */
+#endif
 
     #ifdef BUGFIX_R1
     jpD_800484CC = (f32) deltaFrames;

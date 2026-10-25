@@ -1563,6 +1563,22 @@ void lvlTick(void)
 #undef PORT_TICK_DELTAF
 
     g_GlobalTimer += g_ClockTimer;
+#ifndef TARGET_N64
+    /* The stat pass's f/s counter: the fields the SIMULATION was actually
+     * credited with. Advanced HERE, not in updateFrameCounters, because
+     * g_ClockTimer is the number lvlTick decided to apply - it is zeroed by the
+     * pause and controls-lock checks above, and those fields really are
+     * discarded. Counting where they are produced instead made f/s read a
+     * healthy 60.0 during every pause. This way g_PortFieldsTicked and
+     * g_GlobalTimer are the same sum by construction.
+     * Relaxed atomic: the stat pass and the hitch log read it from the render
+     * thread when render_thread=1. */
+    if (g_ClockTimer > 0)
+    {
+        extern u32 g_PortFieldsTicked;
+        __atomic_fetch_add(&g_PortFieldsTicked, (u32) g_ClockTimer, __ATOMIC_RELAXED);
+    }
+#endif
 
     if ((g_CurrentStageToLoad != LEVELID_TITLE) && (D_80048394 == 0) && (g_ClockTimer > 0))
     {
