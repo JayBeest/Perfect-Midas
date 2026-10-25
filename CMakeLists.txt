@@ -551,4 +551,9 @@ if(GE_PORT_TESTS)
     # These are the shipped rules the pump obeys, not a model of them.
     add_executable(audio_pace_test port/tests/audio_pace.c port/src/audio_pace.c)
     add_test(NAME audio_pace COMMAND audio_pace_test)
+
+    # Frame/tick statistics of the in-game block: pure functions, so the numbers
+    # a player reads in the corner are checked without a window, a GPU or a ROM.
+    add_executable(tick_stats_test port/tests/tick_stats.c port/src/tick_stats.c)
+    add_test(NAME tick_stats COMMAND tick_stats_test)
 endif()

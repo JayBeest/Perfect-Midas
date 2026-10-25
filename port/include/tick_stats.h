@@ -1,0 +1,80 @@
+#ifndef PORT_TICK_STATS_H
+#define PORT_TICK_STATS_H
+
+/*
+ * The frame/tick statistics of the in-game block, as pure functions.
+ *
+ * Nothing here reads a clock, touches SDL, or includes an engine header: the
+ * stat pass in port/fast3d/gfx_sdl2.cpp gathers deltas over its 500 ms window
+ * and these functions turn them into the published numbers. That is what makes
+ * the arithmetic testable without a window, a GPU or a ROM - see
+ * port/tests/tick_stats.c.
+ *
+ * WHY THESE EXIST
+ *
+ * The block used to show `FPS nfps TPS ntps`, and TPS was not the tick rate:
+ * lv.c does `if (g_ClockTimer > 0) g_GlobalTickCount += 1`, so a tick that
+ * absorbed three video fields still counted as one. Its rate is therefore
+ * min(tick rate, 60) - it reads 60 at tickhz=120 and it tracks FPS whenever
+ * frames overrun a field, which is exactly the reading that looked like a
+ * broken counter in a tickhz=hw capture.
+ *
+ * Two numbers replace it, and both are ratios of monotonic counters so that a
+ * stage load cannot disturb them:
+ *
+ *   fields/s   - 60 Hz fields credited to the sim per second, x10.
+ *                600 = 60.0 = simulated time is keeping up. THE invariant: it
+ *                holds at any tick rate and any frame rate the machine can
+ *                sustain. Below 600 the game is in slow motion.
+ *   fields/tick - fields absorbed per admitted tick, x100.
+ *                100 = one field per tick (a normal 60 Hz frame). Above 100 a
+ *                frame overran a field and the tick carried the difference,
+ *                which is what the N64 did when it slowed down. Below 100 a
+ *                raised tick rate is sub-ticking one field.
+ *
+ * Integer arithmetic throughout, rounded rather than truncated: a 500 ms window
+ * at 60.0 fields/s is exactly 30 fields, but windows are not exactly 500 ms and
+ * truncating turned "on target" into "one short" often enough to look like a
+ * drift.
+ */
+
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* A rate per second from a counter delta, scaled by `scale` and rounded.
+ *
+ * delta is the counter's advance over dt_ms of wall time. The result is the
+ * rate MULTIPLIED by scale: scale=1 gives whole units per second (120),
+ * scale=10 gives tenths (600 for 60.0/s), scale=100 gives hundredths. Returns 0
+ * for a zero-length window instead of dividing. */
+uint32_t portStatsRatePerSec(uint32_t delta, uint32_t dt_ms, uint32_t scale);
+
+/* Fields credited per tick, x100. `ticks` is the tick count in the same window
+ * - pass g_PortTickSerial's delta (lv.c, inside lvlTick), NOT boss.c's
+ * g_PortTicksAdmitted, which counts ticks admitted before the pendingGfx
+ * backpressure guard and so would push f/t below 1.00 at tickhz=60. 0 ticks
+ * (a window with no tick at all, e.g. the loop blocked on a load) yields 0
+ * rather than a division. */
+uint32_t portStatsFieldsPerTickX100(uint32_t fields, uint32_t ticks);
+
+/** D4: the tick baseline to measure this window against.
+ *
+ * lvlStageLoad() zeroes g_GlobalTickCount (src/game/lv.c) and the stat pass
+ * keeps its baseline in a static in another translation unit, so it could not
+ * see the reset: the first window after a load computed `0 - last` and
+ * published -2x the pre-load tick count (TPS -600 after five seconds of play,
+ * for up to 500 ms) into both the overlay and audio_pump.log.
+ *
+ * A counter that went backwards is a reset, not a measurement, so the baseline
+ * is re-seated to `now` and that window reads 0. A forward or equal move is
+ * normal and keeps `last`. */
+int32_t portStatsReseatTickBaseline(int32_t last, int32_t now);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* PORT_TICK_STATS_H */
