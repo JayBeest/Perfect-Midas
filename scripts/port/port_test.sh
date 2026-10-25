@@ -36,6 +36,17 @@
 #   the second half of this script. This branch's recorded failure mode is a fix
 #   verified on one shape of input and reported as the mechanism working; a
 #   passing suite has never been sufficient evidence here.
+#
+# WHAT THE GAME HALF CHECKS, AND WHAT IT CANNOT
+#
+#   It prints the renderer the run actually got, because a sandboxed or non-GUI
+#   shell gets `Apple Software Renderer`: that draws into the back buffer while
+#   the window stays black (CLI.md 7.2), so "the pump block is visible" needs the
+#   GPU line, not the capture. It also restores midas.ini after a -v run and
+#   verifies the md5 of both midas.ini and Data/Saves/eeprom.bin, so the demo
+#   cannot leave the user's real settings behind (the audio_run.sh discipline).
+#   It cannot see the screen: if the window is black and the renderer line says
+#   Software, the run had no GPU and that is not a rendering defect.
 
 set -u
 
@@ -135,10 +146,14 @@ if [ "$run_tests" -eq 1 ]; then
             gsub(/\.{2,}/, " ", line)                 # the dot leader (2+ dots)
             gsub(/ +/, " ", line)                     # collapse padding
             status = "?"
-            if (line ~ /Passed/)  { status = "ok"   }
-            if (line ~ /Failed/)  { status = "FAIL" }
-            if (line ~ /Timeout/) { status = "FAIL" }
-            if (line ~ /Not Run/) { status = "FAIL" }
+            if (line ~ /Passed/)    { status = "ok"   }
+            if (line ~ /Failed/)    { status = "FAIL" }
+            if (line ~ /Timeout/)   { status = "FAIL" }
+            if (line ~ /Not Run/)   { status = "FAIL" }
+            # An abort (a failed CHECK) is "***Exception: Other" or
+            # "Subprocess aborted***Exception:", which carries no "Failed".
+            # Without this it printed "?" - the one status a viewer cannot read.
+            if (line ~ /Exception/) { status = "FAIL" }
 
             name = line
             sub(/ .*/, "", name)
@@ -162,7 +177,7 @@ if [ "$run_tests" -eq 1 ]; then
     # would not have honoured.
     if [ "$fail" -ne 0 ]; then
         printf '%s\n' "$raw" | grep -vE \
-            '^ *Start +[0-9]+:|Test +#[0-9]+:|^Test project|^ *[0-9]+% tests passed|^Total Test time|^The following tests FAILED:|^ *[0-9]+ - |^Errors while running|^$' \
+            '^[[:space:]]*Start +[0-9]+:|Test +#[0-9]+:|^Test project|^[[:space:]]*[0-9]+% tests passed|^Total Test time|^The following tests FAILED:|^[[:space:]]*[0-9]+ - |^Errors while running|^$' \
             | head -40 | sed 's/^/    /'
         echo
     fi
@@ -182,17 +197,47 @@ fi
 
 [ -x "$GAME" ] || { echo "no game at $GAME" >&2; exit 2; }
 
+[ -f "$INI" ] || { echo "no midas.ini at $INI - run the game once" >&2; exit 2; }
+
+# A second window steals input focus from a live session; refuse like
+# audio_run.sh and nat_test.sh.
+if pgrep -x "$(basename "$GAME")" >/dev/null 2>&1; then
+    echo "another ProjectMidas is already running - close it first" >&2
+    exit 2
+fi
+
+md5_of() { md5 -q "$1" 2>/dev/null || md5sum "$1" | cut -d' ' -f1; }
+
+SAVE="$BUILD/Data/Saves/eeprom.bin"
+
 # The window. The user's midas.ini is borderless fullscreen on window_display=1
 # at negative coordinates, so a run with no override opens on the second display
 # and looks like nothing happened. -v sets a windowed mode on display 0 for the
 # run and restores the file afterwards, the same trick boot_flag_test.sh uses.
-INI_BACKUP="${TMPDIR:-/tmp}/midas.ini.port_test.$$"
+#
+# The backup is written to a FIXED path, not $TMPDIR/....$$, and is only removed
+# once the file is back. A kill the trap cannot catch (SIGKILL, a closed
+# terminal, an OBS crash) therefore leaves recoverable evidence instead of a
+# silently windowed midas.ini: the next run repairs it before doing anything.
+INI_BACKUP="$BUILD/.port_test_ini.bak"
 restore_ini() {
     [ -f "$INI_BACKUP" ] && cp "$INI_BACKUP" "$INI"
     rm -f "$INI_BACKUP"
 }
-if [ "$windowed" -eq 1 ] && [ -f "$INI" ]; then
-    cp "$INI" "$INI_BACKUP"
+if [ -f "$INI_BACKUP" ]; then
+    cp "$INI_BACKUP" "$INI"
+    rm -f "$INI_BACKUP"
+    echo "note: midas.ini restored from an interrupted -v run"
+    echo
+fi
+
+INI_MD5=$(md5_of "$INI")
+SAVE_MD5=$([ -f "$SAVE" ] && md5_of "$SAVE" || echo absent)
+INI_CMP="${TMPDIR:-/tmp}/midas.ini.port_test.$$"
+cp "$INI" "$INI_CMP"
+
+if [ "$windowed" -eq 1 ]; then
+    cp "$INI_CMP" "$INI_BACKUP"
     trap restore_ini EXIT INT TERM HUP
     sed -e 's/^fullscreen=.*/fullscreen=windowed/' \
         -e 's/^window_x=.*/window_x=80/' \
@@ -208,5 +253,44 @@ echo "  the pump block is the six rows of small white text at the top left."
 echo "  ctrl-C or quit the game to return to the terminal."
 echo
 
+# Tee, so the run's own output still scrolls past (it is half the evidence) and
+# the renderer can be read back afterwards. A black window with working captures
+# is the software-renderer failure in CLI.md 7.2; the renderer line is how you
+# tell the two apart.
+GAME_LOG="$BUILD/.port_test_game.log"
 # shellcheck disable=SC2086  # game_args is a deliberate word-split argument list
-( cd "$BUILD" && ./ProjectMidas $game_args )
+( cd "$BUILD" && ./ProjectMidas $game_args ) 2>&1 | tee "$GAME_LOG"
+
+renderer=$(grep -m1 'GL: renderer' "$GAME_LOG" 2>/dev/null | sed 's/.*GL: renderer: *//')
+echo
+echo "  renderer: ${renderer:-unknown}"
+case "$renderer" in
+    *Software*) echo "            <- software renderer: the window may stay black (CLI.md 7.2)" ;;
+esac
+
+# The acceptance claim is "nothing left changed", so check it rather than
+# trusting the trap: a run that died hard restores nothing.
+status=0
+if [ "$windowed" -eq 1 ]; then
+    restore_ini
+    trap - EXIT INT TERM HUP
+fi
+now=$(md5_of "$INI")
+if [ "$now" != "$INI_MD5" ]; then
+    if [ "$windowed" -eq 1 ]; then
+        echo "  !! midas.ini did NOT restore (now $now) - put the window keys back by hand" >&2
+        status=1
+    else
+        # No -v, so nothing was restored and nothing should be: the game's own
+        # exit-time writers (window geometry, tickhz normalisation) are allowed
+        # to rewrite the file. Show what they changed rather than assume.
+        echo "  note: the run rewrote midas.ini (see the keys below)"
+        diff "$INI_CMP" "$INI" | sed -n '1,20p' | sed 's/^/    /'
+    fi
+fi
+rm -f "$INI_CMP"
+if [ -f "$SAVE" ] && [ "$(md5_of "$SAVE")" != "$SAVE_MD5" ]; then
+    echo "  !! eeprom.bin CHANGED - the run touched the save file" >&2
+    status=1
+fi
+exit $status
