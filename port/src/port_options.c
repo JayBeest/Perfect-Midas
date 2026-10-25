@@ -359,6 +359,7 @@ static s32 optGet(const char *key, s32 *out)
 }
 
 static void classicPartChanged(const char *key, s32 on);   /* "classic mode" below */
+void portClassicSetLive(s32 on);                          /* below */
 
 static s32 optSet(const char *key, s32 v)
 {
@@ -1013,9 +1014,37 @@ s32 portOptSetIni(s32 i, const char *text)
     }
 
 have_value:
-    if (!optSet(o->key, v))
+    /*
+     * n64_aa is Classic Mode, and changing it by text has to run the preset.
+     *
+     * This is the one setter whose callers do no syncing of their own: the
+     * console (conCmdSet) and the Gameplay Options page both come through here,
+     * while the toggle, the watch and the VIDEO sheet each use portOptSetValue /
+     * portOptSetIndex and handle the transition themselves. Written here rather
+     * than in conCmdSet so the next by-text caller cannot miss it - which is
+     * exactly how the console shipped with the bug.
+     *
+     * Only on a real change: setting n64_aa to the value it already has must not
+     * re-enter the mode, because entering overwrites classic_saved with the
+     * forced values and the player's originals would be gone.
+     */
     {
-        return 0;
+        const s32 isClassic = (strcmp(o->key, "n64_aa") == 0);
+        s32 was = 0;
+
+        if (isClassic)
+        {
+            optGet(o->key, &was);
+        }
+        if (!optSet(o->key, v))
+        {
+            return 0;
+        }
+        if (isClassic && (v != 0) != (was != 0))
+        {
+            portClassicSetLive(v != 0);   /* its own single ini write */
+            return 1;
+        }
     }
     portOptSave();
     return 1;
