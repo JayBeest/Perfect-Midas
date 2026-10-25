@@ -150,8 +150,13 @@ static const struct PortWatchRowDef sVideo[] = {
     { PWROW_OPT,        "widescreen", NULL, 0, 0 },
     /* CLASSIC MODE SITS OVER WHAT IT FORCES: every row below it is one of
      * port_options.c's classic keys, locked while it is on (rowClassicLocked).
-     * A row classic mode does not own goes ABOVE it - same rule as the folder. */
-    { PWROW_OPT,        "n64_aa",     "Classic Mode\n", 0, 0 },
+     * A row classic mode does not own goes ABOVE it - same rule as the folder,
+     * and the reason N64 AA is up here: the preset does not own the bit (its
+     * classic_n64aa part decides whether it touches it), so the row stays live
+     * and a player can keep N64 edges with the preset's other parts on, or drop
+     * the edges and keep 240p. */
+    { PWROW_OPT,        "n64_aa",     "N64 AA\n", 0, 0 },
+    { PWROW_OPT,        "classic_mode", "Classic Mode\n", 0, 0 },
     { PWROW_OPT,        "hfov_wide",  NULL, 0, 0 },  /* above 3d resolution; not a classic key */
     { PWROW_OPT,        "weapon_fov", NULL, 0, 0 },  /* beside field of view; not a classic key */
     { PWROW_OPT,        "low_res",    NULL, 0, 0 },  /* 3d resolution: the level render */
@@ -942,7 +947,7 @@ static const char *rowLabelShared(s32 page, s32 row)
 /* Classic mode on the watch. port_options.c owns the list
  * of rows it forces; the folder's VIDEO sheet pends them for APPLY CHANGES,
  * but the watch has no apply row, so the switch acts at once - which now means
- * nothing more than writing n64_aa, because the option table's choke point
+ * nothing more than writing classic_mode, because the option table's choke point
  * (optSet) applies the mode for every surface. */
 extern s32  portClassicOwns(const char *key);
 
@@ -950,10 +955,10 @@ extern s32  portClassicOwns(const char *key);
 s32 portWatchRowLocked(s32 page, s32 row)
 {
     const struct PortWatchRowDef *d = rowDef(page, row);
-    const s32 aa = portOptFind("n64_aa");
+    const s32 mode = portOptFind("classic_mode");
 
     return d != NULL && d->kind == PWROW_OPT && portClassicOwns(d->key)
-        && aa >= 0 && portOptGet(aa) != 0;
+        && mode >= 0 && portOptGet(mode) != 0;
 }
 
 /**
@@ -961,7 +966,7 @@ s32 portWatchRowLocked(s32 page, s32 row)
  * already on but its rows are not at the forced values (an older or hand-edited
  * ini), put them right here, since the rows are locked and the watch has no
  * apply row. The remembered originals (classic_saved) are kept, except when
- * none exist (n64_aa=1 from the launcher or a pre-overhaul ini): then the
+ * none exist (classic_mode=1 from the launcher or a pre-overhaul ini): then the
  * player's current values are remembered first so turning classic mode off has
  * something to restore.
  */
@@ -973,11 +978,11 @@ void portWatchPageEntered(s32 page)
     /* video.c; absent headless, as in portClassicSetLive */
     extern s32  portVideoClassicSavedGet(s32 *v) __attribute__((weak));
     extern void portVideoClassicSavedSet(const s32 *v) __attribute__((weak));
-    const s32 aa = portOptFind("n64_aa");
+    const s32 mode = portOptFind("classic_mode");
     s32 wrote = 0;
     s32 i;
 
-    if (page != PORTWATCH_VIDEO || aa < 0 || portOptGet(aa) == 0)
+    if (page != PORTWATCH_VIDEO || mode < 0 || portOptGet(mode) == 0)
     {
         return;
     }
@@ -1427,7 +1432,7 @@ void portWatchRowStep(s32 page, s32 row, s32 dir)
          * so flip the direction with the presentation.
          *
          * No classic-mode sync here any more: portOptStep ends in the option
-         * table's choke point, which applies the mode when n64_aa changes. */
+         * table's choke point, which applies the mode when classic_mode changes. */
         portOptStep(opt, d->invert ? -dir : dir);
     }
 }
@@ -1448,7 +1453,7 @@ static void rowSetIndexLive(s32 page, s32 row, s32 idx)
         idx = idx ? 0 : 1;
     }
     /* portOptSetIndex ends in the choke point, which applies the mode when
-     * n64_aa changes - the watch needs no sync of its own. */
+     * classic_mode changes - the watch needs no sync of its own. */
     portOptSetIndex(opt, idx);
 }
 
@@ -2602,6 +2607,16 @@ struct PortPresetEntry {
 static const struct PortPresetEntry sPreset[] = {
     /* key              Nintendo 64   Modern */
     { "low_res",        240,          0    },  /* 240 lines vs the window's own */
+    /* The look presets speak for themselves rather than for the classic parts:
+     * they name BOTH keys. classic_mode is what forces the seven (the choke
+     * point runs the transition, so the preset is a real preset and not just
+     * eight writes); n64_aa is named beside it so the Nintendo 64 look keeps
+     * its edges even if the player switched the classic_n64aa part off. This is
+     * the vestigial half the comment above admits to - the table predates
+     * Classic Mode and still disagrees with it (it asks for bilinear where the
+     * mode forces 3-point), so a match here is not a claim the mode is
+     * consistent. */
+    { "classic_mode",   1,            0    },
     { "n64_aa",         1,            0    },
     { "filtering",      1,            2    },  /* bilinear vs 3-point (the N64's own filter, Murk 2026-10-15) */
     { "anisotropy",     0,            16   },

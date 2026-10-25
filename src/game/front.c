@@ -4709,14 +4709,19 @@ static const char *portSheetPageLabel(s32 kind)
  * once they exist. */
 static const struct PortSheetRow port_sheet_rows_video[] = {
     /* the whole sheet is DEFERRED to APPLY CHANGES (portSheetDeferred).
-     * widescreen, msaa, classic mode (n64_aa), mipmaps and 2d filtering moved
-     * here from GRAPHICS. */
+     * widescreen, msaa, classic mode (classic_mode), mipmaps and 2d filtering
+     * moved here from GRAPHICS. */
     { SHROW_OPT, "fullscreen" }, { SHROW_RES, NULL }, { SHROW_OPT, "vsync" },
     { SHROW_OPT, "widescreen" },
+    /* N64 AA ABOVE CLASSIC MODE, by the same rule as the watch: Classic Mode
+     * does not own the bit (its classic_n64aa part decides whether it touches
+     * it), so the row is not greyed while the mode is on. Both of these are
+     * settings a player reads as a pair, which is why they sit together. */
+    { SHROW_OPT, "n64_aa", "N64 AA\n" },
     /* CLASSIC MODE SITS OVER WHAT IT FORCES: every row below
      * it is one of port_options.c's classic keys, greyed while it is on
      * (portSheetRowDisabled). A row that classic mode does not own goes ABOVE. */
-    { SHROW_OPT, "n64_aa", "Classic Mode\n" },
+    { SHROW_OPT, "classic_mode", "Classic Mode\n" },
     /* FIELD OF VIEW above 3D resolution. Not a classic key, so Classic
      * Mode leaves it live (portSheetRowDisabled goes by key) */
     { SHROW_OPT, "hfov_wide" },
@@ -5235,7 +5240,7 @@ static void portSheetBuild(s32 kind)
          * CHANGES lands it; rows already correct get no pick. */
         extern s32 portOptGet(s32 i);
 
-        if (portOptFind("n64_aa") >= 0 && portOptGet(portOptFind("n64_aa")) != 0)
+        if (portOptFind("classic_mode") >= 0 && portOptGet(portOptFind("classic_mode")) != 0)
         {
             portSheetClassicPreset();
         }
@@ -5456,10 +5461,11 @@ static s32 portSheetAnyPending(void)
     return FALSE;
 }
 
-/* Classic Mode (the n64_aa key): turning it ON also picks hardware 3D
+/* Classic Mode (the classic_mode key): turning it ON also picks hardware 3D
  * resolution, 3-point filtering, 8x anisotropy and hardware max fps as pending
- * picks for APPLY CHANGES to land together; turning it OFF only turns off the
- * AA here. */
+ * picks for APPLY CHANGES to land together - and the N64 AA bit, if the mode's
+ * classic_n64aa part is on (portSheetClassicPreset). Turning it OFF restores
+ * the remembered values and clears the bit the mode set. */
 static void portSheetPendSetKey(const char *key, s32 value)
 {
     extern s32 portOptIndexOfValue(s32 i, s32 v);
@@ -5491,6 +5497,7 @@ extern s32         portClassicPartOn(s32 i);
 
 static void portSheetClassicPreset(void)
 {
+    extern s32 portClassicSetsN64Aa(void);   /* video.c: the classic_n64aa part */
     s32 i;
 
     for (i = 0; i < portClassicCount(); i++)
@@ -5500,26 +5507,35 @@ static void portSheetClassicPreset(void)
             portSheetPendSetKey(portClassicKey(i), portClassicVal(i));
         }
     }
+    /* The mode's ONLY link to the AA bit, pended as one more pick. It has to be
+     * here rather than left to the choke point: APPLY CHANGES lands the whole
+     * sheet under portClassicSetHold, which suppresses the transition - the
+     * sheet IS the transition. Without this pick the preset would come on with
+     * N64 edges still off, which is not the look it promises. */
+    if (portClassicSetsN64Aa())
+    {
+        portSheetPendSetKey("n64_aa", 1);
+    }
 }
 
 /** Is classic mode ON as this sheet shows it - the pending pick if there is one, else live? */
 static s32 portSheetClassicShownOn(void)
 {
-    const s32 aa = portOptFind("n64_aa");
+    const s32 mode = portOptFind("classic_mode");
     s32 r;
 
-    if (aa < 0 || port_sheet_kind != PORT_SHEET_VIDEO)
+    if (mode < 0 || port_sheet_kind != PORT_SHEET_VIDEO)
     {
         return FALSE;
     }
     for (r = 0; r < port_sheet_rows; r++)
     {
-        if (port_sheet_row_kind[r] == SHROW_OPT && port_sheet_row_opt[r] == aa && port_sheet_pending[r] >= 0)
+        if (port_sheet_row_kind[r] == SHROW_OPT && port_sheet_row_opt[r] == mode && port_sheet_pending[r] >= 0)
         {
             return port_sheet_pending[r] == 1;
         }
     }
-    return portOptGet(aa) != 0;
+    return portOptGet(mode) != 0;
 }
 
 /** The display mode as this sheet shows it - the pending pick if there is one, else
@@ -5559,6 +5575,7 @@ static s32 portSheetResLocked(void)
 static void portSheetClassicRevert(void)
 {
     extern s32 portVideoClassicSavedGet(s32 *v);
+    extern s32 portClassicSetsN64Aa(void);   /* video.c: the classic_n64aa part */
     s32 v[PORT_SHEET_CLASSIC_KEYS];
     s32 n;
     s32 i, r;
@@ -5573,7 +5590,7 @@ static void portSheetClassicRevert(void)
             port_sheet_pending[r] = -1;
         }
     }
-    if (portOptGet(portOptFind("n64_aa")) == 0)
+    if (portOptGet(portOptFind("classic_mode")) == 0)
     {   /* never applied: live already holds what they were before, and a
          * snapshot here could only be an OLD cycle's */
         return;
@@ -5586,23 +5603,30 @@ static void portSheetClassicRevert(void)
             portSheetPendSetKey(portClassicKey(i), v[i]);
         }
     }
+    /* ...and the bit the mode turned on, on the same terms as the preset's own
+     * pick: only if the mode owns it. A part-off mode never touched the bit, so
+     * nothing here may either. */
+    if (portClassicSetsN64Aa())
+    {
+        portSheetPendSetKey("n64_aa", 0);
+    }
 }
 
-/** Live n64_aa 0 -> pending 1 on this apply? Then remember the four first. */
+/** Live classic_mode 0 -> pending 1 on this apply? Then remember the four first. */
 static void portSheetClassicSnapshot(void)
 {
     extern void portVideoClassicSavedSet(const s32 *v);
-    const s32 aa = portOptFind("n64_aa");
+    const s32 mode = portOptFind("classic_mode");
     s32 v[PORT_SHEET_CLASSIC_KEYS];
     s32 r, i;
 
     extern s32 portVideoClassicSavedGet(s32 *v);
 
-    /* ALREADY ON with nothing remembered (n64_aa=1 from the launcher's AA
-     * box, the console or an old ini): the repair picks portSheetOpen pended
+    /* ALREADY ON with nothing remembered (classic_mode=1 from the launcher,
+     * the console or an old ini): the repair picks portSheetOpen pended
      * are about to replace the player's own values, so remember those
      * unless this apply turns it off */
-    if (aa >= 0 && portOptGet(aa) != 0 && portSheetClassicShownOn() && portVideoClassicSavedGet(v) == 0)
+    if (mode >= 0 && portOptGet(mode) != 0 && portSheetClassicShownOn() && portVideoClassicSavedGet(v) == 0)
     {
         for (i = 0; i < portClassicCount() && i < PORT_SHEET_CLASSIC_KEYS; i++)
         {
@@ -5611,10 +5635,10 @@ static void portSheetClassicSnapshot(void)
         portVideoClassicSavedSet(v);
         return;
     }
-    for (r = 0; aa >= 0 && r < port_sheet_rows; r++)
+    for (r = 0; mode >= 0 && r < port_sheet_rows; r++)
     {
-        if (port_sheet_row_kind[r] == SHROW_OPT && port_sheet_row_opt[r] == aa
-            && port_sheet_pending[r] == 1 && portOptGet(aa) == 0)
+        if (port_sheet_row_kind[r] == SHROW_OPT && port_sheet_row_opt[r] == mode
+            && port_sheet_pending[r] == 1 && portOptGet(mode) == 0)
         {
             for (i = 0; i < portClassicCount() && i < PORT_SHEET_CLASSIC_KEYS; i++)
             {
@@ -5677,7 +5701,7 @@ static void portSheetPick(s32 row, s32 idx)
             port_sheet_pending_resw = 0;
             port_sheet_pending_resh = 0;
         }
-        if (strcmp(portOptKey(opt), "n64_aa") == 0)
+        if (strcmp(portOptKey(opt), "classic_mode") == 0)
         {
             if (idx == 1)
             {
@@ -5993,18 +6017,18 @@ static void portSheetApply(void)
      * name (a launcher Max FPS of 165) could not be pended as a pick, so it
      * is put back raw after the picks land, as the watch does. Only
      * on rows the player left without a pick of their own. */
-    const s32 aaOpt = portOptFind("n64_aa");
+    const s32 modeOpt = portOptFind("classic_mode");
     s32 classicOff = 0;
     s32 classicRaw[PORT_SHEET_CLASSIC_KEYS];
     s32 classicUse[PORT_SHEET_CLASSIC_KEYS] = { 0 };
     s32 classicRawN = 0;
     s32 i;
 
-    for (r = 0; aaOpt >= 0 && r < port_sheet_rows; r++)
+    for (r = 0; modeOpt >= 0 && r < port_sheet_rows; r++)
     {
-        if (port_sheet_row_kind[r] == SHROW_OPT && port_sheet_row_opt[r] == aaOpt)
+        if (port_sheet_row_kind[r] == SHROW_OPT && port_sheet_row_opt[r] == modeOpt)
         {
-            classicOff = (port_sheet_pending[r] == 0) && (portOptGet(aaOpt) != 0);
+            classicOff = (port_sheet_pending[r] == 0) && (portOptGet(modeOpt) != 0);
         }
     }
     if (classicOff)
@@ -6036,7 +6060,7 @@ static void portSheetApply(void)
     portSheetClassicSnapshot();   /* before anything lands: the values being replaced */
     /* The sheet lands its own plan: portSheetClassicPreset/Revert pended the
      * classic values as red picks when the player chose the mode, and this loop
-     * commits them. The choke point must stand down, or n64_aa landing mid-loop
+     * commits them. The choke point must stand down, or classic_mode landing mid-loop
      * would apply the mode on its own and the pended values would then land on
      * top of it - correct only by luck, and only while the row order happens to
      * favour it. This is the mechanism that makes that question unaskable. */
