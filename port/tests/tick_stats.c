@@ -108,6 +108,34 @@ static void negative_never_published(void)
     CHECK((0 - baseline) == 0);
 }
 
+/* The stall cap's own verdict: the fields a tick measured against the fields it
+ * was allowed to keep. The live case is a 367 ms frame under hw pacing, which
+ * is 22 fields of wall time credited 8 - the reading the hitch log could not
+ * express while it compared credits against the model's hold instead. */
+static void stall_cap(void)
+{
+    const uint32_t field = 781250u;  /* PORT_TICK_FIELD_COUNTS, NTSC */
+    const uint32_t ms367 = 17203125u; /* 367 ms at 46.875 MHz */
+
+    CHECK(portStatsMeasuredFields(ms367, field) == 22);
+    CHECK(portStatsCreditedFields(22, 8) == 8);
+
+    /* credited == measured means the cap did not fire, so nothing is dropped */
+    CHECK(portStatsCreditedFields(8, 8) == 8);
+    CHECK(portStatsCreditedFields(4, 8) == 4);
+
+    /* 0 = uncapped, the same convention portTickMaxStep() uses */
+    CHECK(portStatsCreditedFields(22, 0) == 22);
+
+    /* a frame shorter than a field credits nothing, and no division by zero */
+    CHECK(portStatsMeasuredFields(700000u, field) == 0);
+    CHECK(portStatsMeasuredFields(10, 0) == 0);
+
+    /* ten seconds of stall must not wrap the arithmetic: 600 fields, 8 kept */
+    CHECK(portStatsMeasuredFields(468750000u, field) == 600);
+    CHECK(portStatsCreditedFields(600, 8) == 8);
+}
+
 int main(void)
 {
     healthy_60hz();
@@ -118,6 +146,7 @@ int main(void)
     rounding();
     stage_load_reset();
     negative_never_published();
+    stall_cap();
 
     printf("tick_stats: all checks passed\n");
     return 0;

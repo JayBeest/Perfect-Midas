@@ -39,3 +39,21 @@ int32_t portStatsReseatTickBaseline(int32_t last, int32_t now)
      * reset makes `now` plainly less than `last`. */
     return (now < last) ? now : last;
 }
+
+uint32_t portStatsMeasuredFields(uint32_t elapsed_counts, uint32_t field_counts)
+{
+    if (field_counts == 0) {
+        return 0;
+    }
+
+    return elapsed_counts / field_counts;
+}
+
+uint32_t portStatsCreditedFields(uint32_t measured, uint32_t cap_fields)
+{
+    if (cap_fields == 0 || measured <= cap_fields) {
+        return measured;
+    }
+
+    return cap_fields;
+}

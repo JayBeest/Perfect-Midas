@@ -11,12 +11,19 @@
  *   sim     longest stretch of game code between two top-level pumps (tick +
  *           display-list build + any loading), pacer = time the pump slept
  *           on its schedule, ticks = g_GlobalTickCount advance, fld = the
- *           fields credited to the sim (g_PortFieldsTicked), and under
- *           tickhz=hw `model held N` = the field hold the pacer last priced
- *           (g_PortHwFieldsHeld; read, never recomputed - see below). fld far
- *           below N is the sim losing the difference: the credit path clamps at
- *           GE_TICKMAXSTEP (8 fields) while the hw model may price a frame at
- *           up to 30. That comparison is the reason the audit is here.
+ *           fields credited to the sim (g_PortFieldsTicked). `credit N of M`
+ *           appears when the stall cap fired: a tick measured M fields of
+ *           elapsed time (GE_TICKMAXSTEP) and was credited N. Under tickhz=hw
+ *           `pacer asked N` is the field hold the pacer last priced
+ *           (g_PortHwFieldsHeld; read, never recomputed - see below).
+ *
+ *           `credit` and `pacer asked` are NOT baselines for each other. On a
+ *           renderer slower than the hw model a frame spans far more wall time
+ *           than either figure, so the old `fld` vs `model held` reading said
+ *           "healthy" at exactly the moment the most simulated time was being
+ *           dropped. `credit` is published by the clamp itself, which is the
+ *           only place that knows both halves; its presence on a line is the
+ *           signal that time was lost, and the shortfall is M - N.
  *   events  since the previous frame, count (total ms) of each timed kind:
  *           rooms (bgLoadRoomModelData), models (load_object_fill_header:
  *           file + ROM conversion + textures), tex (texLoad inflate),
@@ -143,36 +150,64 @@ void portHitchFrame(unsigned long long interval_us, unsigned long long run_us,
      * (the render thread when render_thread=1) and that call mutates the model and
      * consumes the pending load charge. */
     extern int g_PortHwFieldsHeld;     /* frametiming.c, written by the game thread */
+    extern unsigned int g_PortTickClampSeq;      /* frametiming.c, the stall cap */
+    extern unsigned int g_PortTickClampMeasured;
+    extern unsigned int g_PortTickClampCredited;
     const unsigned long long slept = sleep - s_LastSleep;
     const unsigned long long judged = (portTickHwPace() && interval_us > slept) ? interval_us - slept : interval_us;
     const unsigned int dfld = __atomic_load_n(&g_PortFieldsTicked, __ATOMIC_RELAXED) - s_LastFields;
-    char hw[48];
+    char hw[64];
 
-    /* The audit: under hw pacing the model asks for `model held N` fields and
-     * the sim is credited `fld`. Both cover the same span, the frame that just
-     * presented: this function is called once per present, from
-     * gfx_sdl_swap_buffers_begin, and s_LastFields is re-read at the end of
-     * every call - so `fld` is the fields credited since the previous FRAME,
-     * which is the frame `model held` was priced for. (That holds even when no
-     * line prints: the statics advance either way.) `fld` short of N is
-     * simulated time thrown away (D5 in docs/port/tick-and-field-accounting.md),
-     * which is invisible at 60fps because every frame is one field there. */
+    /* Two independent facts about the frame that just presented, neither of
+     * which is a baseline for the other:
+     *
+     *   `credit N of M`  the stall cap's own verdict, published by
+     *                    waitForNextFrame where it clamps: a tick measured M
+     *                    fields of elapsed time and was credited N. It prints
+     *                    only on a frame where the cap fired, so its presence
+     *                    is the signal, and M - N is the time not simulated.
+     *   `pacer asked N`  the hold the hw model priced for this frame. It is
+     *                    not a prediction of wall time: on a renderer slower
+     *                    than the model the frame spans far more than N, which
+     *                    is exactly when `credit` appears beside it.
+     *
+     * The pair belongs to one clamp only if the sequence is unchanged across
+     * the two value loads; a render-thread reader can otherwise catch half of
+     * one verdict and half of the next. */
     hw[0] = '\0';
-    if (portTickHwPace())
     {
-        /* Relaxed load: this runs on the render thread when render_thread=1 and
-         * the writer is the game thread. It is loaded atomically to match the
-         * store, since a torn int would print a nonsense field count rather
-         * than a merely stale one.
-         *
-         * 0 means "no hold priced yet" (the model has not seen a frame), NOT
-         * "the model asked for zero fields" - a frame is always at least one
-         * field - so print nothing rather than a 0 a reader would misread. */
-        const int held = __atomic_load_n(&g_PortHwFieldsHeld, __ATOMIC_RELAXED);
+        static unsigned int s_LastClampSeq;
+        const unsigned int seq = __atomic_load_n(&g_PortTickClampSeq, __ATOMIC_ACQUIRE);
+        int n = 0;
 
-        if (held > 0)
+        if (seq != s_LastClampSeq)
         {
-            snprintf(hw, sizeof hw, " model held %d", held);
+            const unsigned int measured = __atomic_load_n(&g_PortTickClampMeasured, __ATOMIC_RELAXED);
+            const unsigned int credited = __atomic_load_n(&g_PortTickClampCredited, __ATOMIC_RELAXED);
+
+            if (seq == __atomic_load_n(&g_PortTickClampSeq, __ATOMIC_ACQUIRE) && credited < measured)
+            {
+                n = snprintf(hw, sizeof hw, " credit %u of %u", credited, measured);
+            }
+            s_LastClampSeq = seq;
+        }
+        if (portTickHwPace())
+        {
+            /* Relaxed load: this runs on the render thread when render_thread=1
+             * and the writer is the game thread. It is loaded atomically to
+             * match the store, since a torn int would print a nonsense field
+             * count rather than a merely stale one.
+             *
+             * 0 means "no hold priced yet" (the model has not seen a frame),
+             * NOT "the model asked for zero fields" - a frame is always at
+             * least one field - so print nothing rather than a 0 a reader
+             * would misread. */
+            const int held = __atomic_load_n(&g_PortHwFieldsHeld, __ATOMIC_RELAXED);
+
+            if (held > 0 && n >= 0 && n < (int) sizeof hw)
+            {
+                snprintf(hw + n, sizeof hw - (size_t) n, " pacer asked %d", held);
+            }
         }
     }
 

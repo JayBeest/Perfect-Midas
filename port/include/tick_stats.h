@@ -60,6 +60,27 @@ uint32_t portStatsRatePerSec(uint32_t delta, uint32_t dt_ms, uint32_t scale);
  * rather than a division. */
 uint32_t portStatsFieldsPerTickX100(uint32_t fields, uint32_t ticks);
 
+/* The stall cap's verdict, in whole 60Hz fields.
+ *
+ * `measured` is what a tick's elapsed time was worth: `elapsed_counts` is the
+ * OS_CPU_COUNTER delta since the previous tick and `field_counts` is one field
+ * in the same units (PORT_TICK_FIELD_COUNTS). The division truncates, the same
+ * way waitForNextFrame turns counts into whole fields, so this is the count the
+ * tick would have been credited had the cap not interfered.
+ *
+ * `credited` is what GE_TICKMAXSTEP will actually let it keep. cap_fields is
+ * portTickMaxStep(), where 0 means uncapped - the same convention the cap
+ * itself uses. Note the shape of the answer: credited == measured means the cap
+ * did not fire, and credited < measured is time that will not be simulated.
+ *
+ * These exist because comparing the credited fields against the hw model's
+ * *hold* measures nothing: on a renderer slower than the model the frame spans
+ * far more wall time than either number, so the comparison read "healthy"
+ * exactly when the most time was being dropped. The clamp site is the only
+ * place that knows both halves. */
+uint32_t portStatsMeasuredFields(uint32_t elapsed_counts, uint32_t field_counts);
+uint32_t portStatsCreditedFields(uint32_t measured, uint32_t cap_fields);
+
 /** D4: the tick baseline to measure this window against.
  *
  * lvlStageLoad() zeroes g_GlobalTickCount (src/game/lv.c) and the stat pass

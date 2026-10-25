@@ -64,6 +64,15 @@ extern s32 g_PortStatFieldsPerTickX100;
  * negative rate across a stage load. */
 extern u32 g_PortFieldsTicked;
 extern u32 g_PortTicksAdmitted;
+/* The stall cap's last verdict (frametiming.c, portTickNoteClamp): the fields a
+ * tick measured and the fields it was allowed to keep. Read as a pair - take
+ * g_PortTickClampSeq before and after; if it is unchanged, the two values
+ * belong to one clamp. Written only by the game thread, read by the hitch log
+ * (which may be on the render thread). credited < measured is simulated time
+ * the cap discarded; credited == measured means the cap did not fire. */
+extern u32 g_PortTickClampSeq;
+extern u32 g_PortTickClampMeasured;
+extern u32 g_PortTickClampCredited;
 s32 portTickHz(void);           /* 60 = classic, 0 = uncapped, else that literal rate */
 u32 portTickGateCounts(void);   /* boss.c tick admission threshold, in counts */
 u32 portTickFieldGateCounts(void); /* gate that yields exactly 60 ticks/s (front end) */

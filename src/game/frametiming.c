@@ -1,5 +1,6 @@
 #include <ultra64.h>
 #include "frametiming.h"
+#include "tick_stats.h"   /* the clamp verdict the hitch log reads */
 
 // data
 s32 lastFrameCounter = -1;
@@ -93,6 +94,24 @@ static s32 portTickMaxStep(void)
     return cap;
 }
 
+/** Publish the stall cap's verdict for the frame just measured.
+ *
+ * Called from waitForNextFrame *before* it clamps, with the raw elapsed counts,
+ * because afterwards the number is gone. Only the game thread runs this, so the
+ * read-modify-write of the sequence is single-writer; the render thread only
+ * reads (port/src/hitchlog.c). */
+static void portTickNoteClamp(u32 elapsed_counts)
+{
+    const u32 measured = portStatsMeasuredFields(elapsed_counts, PORT_TICK_FIELD_COUNTS);
+    const u32 credited = portStatsCreditedFields(measured, (u32) portTickMaxStep());
+
+    __atomic_store_n(&g_PortTickClampMeasured, measured, __ATOMIC_RELAXED);
+    __atomic_store_n(&g_PortTickClampCredited, credited, __ATOMIC_RELAXED);
+    __atomic_store_n(&g_PortTickClampSeq,
+                     __atomic_load_n(&g_PortTickClampSeq, __ATOMIC_RELAXED) + 1u,
+                     __ATOMIC_RELEASE);
+}
+
 /* GE_NOTICKCARRY=1: restore the old classic (tickhz=60) behaviour -
  * round elapsed to the nearest field and drop the remainder - for A/B
  * comparison against the carry version below. */
@@ -129,6 +148,24 @@ s32 g_PortStatFieldsPerTickX100 = 0;
  * rate across a load - this one is never reset. See the stat pass in
  * gfx_sdl2.cpp and docs/port/tick-and-field-accounting.md. */
 u32 g_PortFieldsTicked = 0;
+
+/* The stall cap's last verdict, for the hitch log (port/src/hitchlog.c).
+ *
+ * Published HERE, at the clamp, because this is the only place that knows both
+ * what a tick measured and what it was allowed to keep. The hitch line used to
+ * invite a reader to compare the credited fields against the hw model's hold,
+ * which measures nothing: when the renderer is slower than the model the frame
+ * spans far more wall time than either number, so that comparison read
+ * "healthy" at exactly the moment the most simulated time was being dropped.
+ *
+ * ClampMeasured/ClampCredited are only meaningful together, so a reader takes
+ * ClampSeq before and after: unchanged means the pair belongs to one clamp.
+ * Relaxed loads are enough for the values themselves (they are stored before
+ * the seq bump, and the reader's re-check discards a torn pair); the seq bump
+ * is a release store so the two values are visible before it is. */
+u32 g_PortTickClampSeq = 0;
+u32 g_PortTickClampMeasured = 0;
+u32 g_PortTickClampCredited = 0;
 
 /* Counts of real time credited to the field accumulator but not yet worth a
  * whole field. THE carry - see waitForNextFrame. */
@@ -1174,9 +1211,11 @@ void waitForNextFrame(void) //maybe WaitForTick
 
       /* Stall cap: a tick advances at most portTickMaxStep() fields and the
        * rest of a stall is dropped, so a long hitch such as a window drag is
-       * not simulated as one huge step. */
+       * not simulated as one huge step. Report the drop here, where both
+       * halves are still known. */
       if (portTickMaxStep() > 0 && elapsed > (u32) portTickMaxStep() * PORT_TICK_FIELD_COUNTS)
       {
+          portTickNoteClamp(elapsed);
           elapsed = (u32) portTickMaxStep() * PORT_TICK_FIELD_COUNTS;
           portTickFieldAccum = 0;
       }
@@ -1275,9 +1314,11 @@ void waitForNextFrame(void) //maybe WaitForTick
 
       frameDelay = 1;
 
-      /* Stall cap - same policy and knob as the general path above. */
+      /* Stall cap - same policy and knob as the general path above, and the
+       * same report. */
       if (portTickMaxStep() > 0 && elapsed > (u32) portTickMaxStep() * PORT_TICK_FIELD_COUNTS)
       {
+          portTickNoteClamp(elapsed);
           elapsed = (u32) portTickMaxStep() * PORT_TICK_FIELD_COUNTS;
           portTickFieldAccum = 0;
       }

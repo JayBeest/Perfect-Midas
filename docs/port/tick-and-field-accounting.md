@@ -412,15 +412,11 @@ does not touch pacing. Recorded so it is not lost:
   cap (§10) and the 8-field credit cap are three caps on one quantity and
   should be decided together rather than one at a time.
 
-Still open as of this commit: the hitch line reports `fld` (the fields credited
-to the sim) beside the hw model's hold and invites a comparison of the two, and
-that comparison does not measure the loss — on a renderer slower than the model
-the frame spans far more wall time than either number, so it reads "healthy" at
-exactly the moment the most simulated time is being dropped. See the third-pass
-audit, `docs/port/audio-pump-audit-pass3.md` F1. Recorded rather than fixed here
-because the honest figure is the clamp's own verdict, which the credit path does
-not yet publish; this branch is documentation and instrument work, and that is a
-change to what the hitch line reports.
+Fixed by this commit: the hitch line now reports the clamp at the clamp site —
+`credit N of M`, e.g. `credit 8 of 53` — instead of inviting a comparison of
+`fld` against the model's hold, which did not measure the loss (see the
+third-pass audit, `docs/port/audio-pump-audit-pass3.md` F1). The model's figure
+is renamed `pacer asked N` so it is not read as a baseline for the credit.
 
 ### 5.3 Two defects in the fix itself, found by review
 
@@ -531,8 +527,9 @@ and is invisible without it. Costs one `u32`, one field in the stat pass, and tw
 > the stat pass in `gfx_sdl2.cpp` snapshots `g_GlobalTickCount` once and
 > rebaselines it through `portStatsReseatTickBaseline` (D4); the overlay row is
 > `bondview2.c` `portDrawAudioPumpStats`; the log line and legend are
-> `audio_pc.c`; the hitch line carries `N fld` and, under hw pacing,
-> `model held N` read from `g_PortHwFieldsHeld`.
+> `audio_pc.c`; the hitch line carries `N fld`, `credit N of M` when the stall
+> cap fired (published at the clamp), and, under hw pacing, `pacer asked N` read
+> from `g_PortHwFieldsHeld`.
 >
 > `tk` is **`g_PortTickSerial`** (incremented inside `lvlTick`), not boss.c's
 > `g_PortTicksAdmitted`: the latter is incremented *before* the
@@ -557,7 +554,11 @@ Add to C, if the hw model is to be trusted against footage: in `portTickHwPace()
 mode, log the model's field hold beside the fields actually credited, per hitch.
 That single line answers "is our console model right" per frame, which is the
 real question a `tickhz=hw` capture is asking — and it is also the cheapest
-instrument for H1. **(Done: `model held N` / `N fld` in the hitch line.)**
+instrument for H1. **(Done: `credit N of M` / `pacer asked N` in the hitch line.
+The first cut printed `N fld` beside `model held N` and invited a comparison of
+those two; it read healthy at exactly the moment the most time was being
+dropped, because on a renderer slower than the model the frame spans far more
+wall time than either number. See `docs/port/audio-pump-audit-pass3.md` F1.)**
 
 Whatever is chosen, **D4 first**: a diagnostic file that can publish `TPS -600`
 undercuts the rest of the file.
@@ -771,4 +772,5 @@ For the next session, so none of this has to be re-derived:
   rates).
 - **The hw audit** — `g_PortHwFieldsHeld` (`frametiming.c`, stored by
   `portHwPaceFields`) read by `portHitchFrame` (`port/src/hitchlog.c`), which
-  prints `N fld` and, when priced, `model held N`.
+  prints `N fld`, `credit N of M` when the stall cap fired, and, when priced,
+  `pacer asked N`.
