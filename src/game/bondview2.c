@@ -12765,9 +12765,30 @@ static Gfx *portDrawAudioPumpStats(Gfx *gdl, s32 x, s32 y)
     gdl = microcode_constructor(gdl);
     PORT_HUD_ANCHOR_FULL(gdl, PORT_HUD_ANCHOR_LEFT);   /* the overlay sits at the window edge */
     /* One black backing box for the whole block, as the input overlay does for
-     * its row: a bright sky behind six lines of thin glyphs is unreadable. */
-    gdl = microcode_constructor_related_to_menus(gdl, 0, top - 1, viGetX(),
-                                                 top + rows * PORT_APU_ROW, 0x64);
+     * its row: a bright sky behind six lines of thin glyphs is unreadable.
+     *
+     * It is sized to the TEXT, not to the view. It used to run to viGetX() and
+     * painted a dark band across a third of the picture for six short rows -
+     * visible in the captures, and dead space over a live HUD. The same
+     * measure-then-pad the skip hint below uses: the widest row, two pixels of
+     * air, and the block's own left edge. */
+    {
+        s32 maxw = 0;
+
+        for (i = 0; i < rows; i++)
+        {
+            s32 lh = 0;
+            s32 lw = 0;
+
+            textMeasure(&lh, &lw, line[i], ptrFontBankGothicChars, ptrFontBankGothic, 0);
+            if (lw > maxw)
+            {
+                maxw = lw;
+            }
+        }
+        gdl = microcode_constructor_related_to_menus(gdl, 0, top - 1, x + maxw + 2,
+                                                     top + rows * PORT_APU_ROW, 0x64);
+    }
     for (i = 0; i < rows; i++)
     {
         s32 lx = x;
