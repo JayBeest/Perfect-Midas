@@ -1,0 +1,311 @@
+# The audio-pump branch: state of play
+
+Branch `audio-pump-wallclock_gen4`, base `3a1ab62`, **12 commits**. This is the
+entry point for the next session: what the branch set out to do, what is fixed,
+what is not, and which claims rest on measurement rather than inference.
+
+It does not replace the two long documents. It tells you which of them to open
+and why.
+
+- **`docs/port/audio-pump-audit-pass3.md`** — the execution audit. Findings
+  F1–F6, the execution record with predictions written before each run, and the
+  post-fix numbers now in §6. Read it for *evidence*.
+- **`docs/port/tick-and-field-accounting.md`** — the design record. The trace,
+  the four modes, the D-numbered defects, and §11's hw-pacing measurements.
+  Read it for *mechanism*.
+
+---
+
+## 1. The short version
+
+The branch replaced a number that lied — `TPS`, which read `min(tick rate, 60)`
+and tracked `FPS` — with four that could be trusted: `fps`, `tk`, `f/s`, `f/t`.
+Three passes then audited that work, the audits found six findings and four
+D-numbered defects, and every one of them is now closed.
+
+The last two were held back deliberately — both were behaviour changes on a
+branch that was documenting and instrumenting — and were finished on 2026-10-25
+in commits `87af349` and `17bf80b`.
+
+**State: build clean, `ctest` 9/9 (the only compiler output is the pre-existing
+`__DATA,__common` alignment warning), no known false statement in a shipped
+manual.** Five items remain open, and the most important thing about them is
+which ones *cannot* be settled on this machine.
+
+---
+
+## 2. What changed in the last session
+
+### `87af349` — the `tickhz` writer (audit F3)
+
+**Was wrong.** A session running hardware pacing (`maxfps=-1`) left whatever
+numeric `tickhz` the file already had. The writer returned early on the resolved
+`-1`, and the live `maxfps=-1` path returned before calling the writer at all.
+The file described a mode that had not run.
+
+**Is true now.** The writer emits `hw`, via `portTickIniValue()`
+(`port/src/tick_stats.c`), a pure function with `NULL` for the `-2` re-derive
+sentinel so that state cannot reach a file. A file with no `tickhz` line still
+gets none.
+
+**The subtle half.** The `tickhz` handler used to record what the file said, but
+`videoCoupleTickToMaxFps` calls that handler with `hw` *while the file is still
+being read*, so the synthetic call could claim the file said `hw` when it said
+`120`. That is why F3 stayed invisible for three passes. The ini parse loop now
+records the file's own line, for that key only; the handler records nothing.
+
+**A wrong first cut, kept in the record.** The first version used a
+parse-in-progress flag set around the whole dispatch. It passed only because
+this machine's `midas.ini` lists `maxfps` above `tickhz`; with the two lines
+reversed the file was still left stale, because nothing gives `midas.ini` a line
+order. Caught by the user reading the diff. Both documents record it — this is
+the third instance on this branch of a fix verified on one shape of input.
+
+**Verified by execution** — six cases, each from a backed-up `midas.ini`,
+restored after (`md5` unchanged each time): `maxfps=-1` then `tickhz=120` → `hw`;
+`tickhz=120` then `maxfps=-1` → `hw`; `tickhz=hw` then `maxfps=-1` → no write;
+no `tickhz` line → still none; `tickhz=hw` + live `cl_maxfps 120` → `120`;
+`tickhz=hw` then `maxfps=120`, cold launch → stays `hw` (pre-existing, and not a
+violation: the file and the running mode agree).
+
+### `17bf80b` — the stall cap versus a deliberate hold (D5)
+
+**Was wrong.** `tickhz=hw` prices a frame at the fields the console would have
+needed (`portHwPaceFields`, 1..30) and `boss.c` holds the tick for that many.
+The credit path then clamped elapsed time at 8 fields. Every frame priced above
+8 was waited for in full and credited 8 — the audit measured 45–50 fields of
+simulated time discarded per frame in Dam.
+
+**Is true now.** Under hardware pacing a tick is credited `max(cap, hold)`.
+The policy is one pure function, `portStatsStepCap()`; `portTickCreditCap()` in
+`frametiming.c` only gathers its inputs.
+
+**The objection, and how it was answered.** §5.2 recorded the concern that
+threading the hold through `boss.c` adds a cross-module contract that can itself
+be wrong. The answer is *where the hold is read*: `boss.c` is not involved at
+all. `portHwPaceFields()` already published the hold it priced
+(`g_PortHwFieldsHeld`, added by `6d02aa1` for the hitch log), so the clamp reads
+a number the pacer wrote. The flow stays one-way.
+
+**What keeps the cap honest** — each clause is a test case in `stall_cap_hold`:
+the raise is only *to* the hold, and the hold is itself capped at 30 fields; it
+applies only under `portTickHwPace()` (false in menus, demos and outside a
+stage); an explicit `GE_TICKMAXSTEP` is obeyed exactly, because that knob is how
+the cap is measured; `0` still means uncapped.
+
+**The third position was rejected.** "Make the hold authoritative" — admit N
+without re-deriving it — was considered and dropped: the wall clock is still
+measured and still compared, so a frame that ran longer than its hold still has
+the excess dropped and reported. Trusting the hold blindly would simulate time
+that never elapsed.
+
+**The three caps (§10), decided together.** Only the **8-field credit cap**
+moved. The **6-field render cap** is left alone — it bounds the fit, not the
+tick, and the open question of whether that fit saw load hitches is about the
+fit's accuracy, not about crediting. The **30-field total cap** is left alone
+and is now the bound on this raise too.
+
+**Verified by execution** (macOS, Apple Software Renderer, `GE_STAGE=dam`,
+`GE_HWSCALE=3` to price holds above the cap):
+
+```
+   8 credit 8 of 52 pacer asked 6      hold under the cap: still clamps at 8
+   6 credit 8 of 54 pacer asked 6
+   1 credit 12 of 57 pacer asked 12    hold over the cap: the hold is admitted
+```
+
+One frame in fifteen carried a hold above 8, and that frame's credit moved from
+8 to 12 — the change is confined to the frames it is about. `GE_HWSCALE=3` also
+explains why holds above 8 are rare: scaling the render model 3× saturates it
+against its own 6-field cap, so a 12-field hold is 6 render fields plus a
+~100 ms load charge. **The raise lands on load frames, which is the population
+D5 was about.**
+
+### Also closed
+
+- **Audit §8.2** — `credit N of M` and `pacer asked N` now have shipped text:
+  `tools/console_help.txt`, section THE HITCH LINE. They were the branch's only
+  per-frame evidence of time loss and had no user-facing documentation at all.
+- **`tools/midas_ini_help.txt`** — the `tickhz` row said a stale number "is
+  ignored rather than an override", which F3's fix made false.
+
+---
+
+## 3. Findings register
+
+| Item | Severity | Status |
+|---|---|---|
+| F1 `model held` vs `fld` reads healthy while 63% of wall time is lost | major | fixed, `cb98c39` |
+| F3 manual says `tickhz` is rewritten to `hw`; it was not | major | fixed, `87af349` |
+| F2 manual never states `tk` is bounded by the present rate | minor | fixed, `52807f7` |
+| F4 "`f/s` reads 0 during a stage load" — it reads 0.8–1.4 | minor | fixed, `52807f7` |
+| F5 stated healthy band narrower than measured (59.3–62.9) | minor | fixed, `52807f7` |
+| F6 log's frame/tick columns frozen, not measured, during a hold | minor | fixed, `52807f7` |
+| D4 negative `TPS` for one window after every stage load | — | fixed; unit-tested, never seen live |
+| D5 stall cap truncates a deliberate hw hold | major | fixed, `17bf80b` |
+| D6 `f/s` read a healthy 60.0 during every pause | — | fixed |
+| D7 the D4 guard could still publish a negative | — | fixed |
+| §8.2 `credit` undocumented where a user would see it | minor | fixed, `17bf80b` |
+| Audio pump queue has almost no headroom above one frame | — | **reported, not fixed** |
+| F3-A's first cut was order-dependent | — | caught before commit, recorded |
+
+---
+
+## 4. What remains
+
+Ordered by what a reader should do next, not by severity.
+
+### 4.1 Two cited documents do not exist — doable now
+
+`src/game/frametiming.c` (the hw model header and the load-hitch note) and
+`src/game/ramromreplay.c:510` cite `docs/port/n64-hw-pacing.md`.
+`port/src/video.c:846` cites `docs/port/tick-rate-binding.md`. Neither file
+exists in the tree or on disk.
+
+This is the branch's own defect class — a reader following a reference into
+nothing — and it costs nothing to fix properly, because
+`tick-and-field-accounting.md` §11 **is** the evidence that belongs in the first
+one: the hw model, the 8.7-second Dam hold, the coefficient breakdown, the
+`GE_STAGE` limitation. §11 needs a home, not research.
+
+Reminder: `docs/` is gitignored, so a new file there needs `git add -f` or it
+will exist on one disk and nowhere else. The three tracked docs are all
+force-added.
+
+### 4.2 `lv.c`'s comment still asserts something false — needs a decision
+
+`src/game/lv.c:1520-1522` says `g_GlobalTickCount` "must count 60Hz fields, not
+ticks … Always true at GE_TICKHZ=60". It is true only at or above 60 fps. Below
+60, `g_ClockTimer` is 2–4 and the counter advances by 1, so it counts *ticks*
+(measured: `f/t 4.00` at 15 fps).
+
+All three documents name this as **the one deliberately-live mislabel**. They
+leave it because the fix is a decision about parity semantics —
+`chraction.c`, `bondview2.c`, `propobj.c` and `gunfire.c` all key off this
+counter as if one tick were one field. It is not a comment edit. Either make the
+parity decision and change the consumers, or say plainly what the counter is and
+correct §4 and `tps-the-lie.md` §2.4 to stop claiming it is unfixed.
+
+### 4.3 Three claims need hardware, not care — blocked here
+
+From the audit's §2, all stated as behaviour in the shipped manuals, none
+reproduced on this machine:
+
+- **Paused / controls-locked**: "`f/s` reads near 0 while paused, `tk` can still
+  read 60 beside it." Consistent with `lv.c` (the serial increments before
+  `g_ClockTimer` is zeroed) but never executed — the console has no pause verb.
+- **Sub-ticking**: "`f/t` below 1.00 at a raised tick rate." Needs a renderer
+  faster than 60 fps; this one tops out near 38, and the lowest `f/t` measured
+  anywhere was 1.03.
+- **vsync pinning `tk` at 60**: needs a real 60 Hz panel where vsync, not the
+  machine, is the limit.
+
+One machine with a working GL driver settles all three in an afternoon. Until
+then these are the manual's most load-bearing claims resting on inference.
+
+### 4.4 D4's fix was never observed under a live reset — blocked-ish
+
+The negative-`TPS` guard is covered by unit test, and `tps-the-lie.md` reports
+98 consecutive live lines with no negative. But no run has produced a stage-load
+reset inside a stat window with a non-zero pre-load count. The race the snapshot
+exists for is reasoned, not seen.
+
+### 4.5 The hw hold's blank screen is white — small, deferred, real
+
+While a stage load is held nothing is drawn, so the window shows the last back
+buffer. White reads as a broken application where black would read as a loading
+screen. Not investigated; not known to be macOS-only. Recorded in
+`tick-and-field-accounting.md` §11.2.
+
+### 4.6 New: the audio pump has almost no queue headroom — reported, not fixed
+
+Found on 2026-10-25 while checking an audio complaint, not investigated. At
+1 fps the pump sizes its buffer to roughly one frame — `que 77615/77703B`,
+880 ms buffered against an 881 ms target under a 927 ms cap. A frame that
+overshoots the target drains it completely; one `dry 1` event was observed in
+23 lines. The columns were otherwise clean (`over 0 skip 0 stall 0`, the mixer
+holding real time).
+
+Not the same as the audible artefact in that session, which was the world at
+9.2 fields/s against music sequenced at wall rate — the documented D5-era
+mismatch, unchanged by the recent work. This one is a separate, smaller defect
+about buffer sizing.
+
+### 4.7 Not verified anywhere
+
+Windows and Linux. Every measurement on this branch is macOS, and most of it is
+from an **Apple Software Renderer** context — front-end frames ~25 ms, Dam
+frames ~360–890 ms. Say which renderer a number came from before drawing a
+conclusion about frame rates above 60.
+
+---
+
+## 5. Documentation map
+
+The five places that describe the same behaviour overlap on purpose and drift
+apart when one moves alone. Touch one, check the rest:
+
+- `tools/console_help.txt` — the in-game console and the log legend. Sections
+  THE HITCH LINE, READING THE BLOCK, WHAT TO REPORT.
+- `tools/midas_ini_help.txt` — every `midas.ini` key, including `tickhz`.
+- `port/src/audio_pc.c` — the emitted log legend (must agree with
+  `console_help.txt`).
+- `docs/port/tick-and-field-accounting.md` — the design record.
+- `docs/port/tps-the-lie.md` — the original overlay argument; the historical
+  record of why `TPS` went away.
+- `docs/port/audio-pump-audit-pass3.md` — the audit and its §6 post-fix numbers.
+
+The branch's own history says **every pass fixed real defects and introduced at
+least one of its own**. Anyone doing the next pass should write their findings
+down before editing anything, and should assume the same of themselves.
+
+---
+
+## 6. How to verify
+
+```bash
+cd /Users/jcorneli/Developer/DeepSeek/PM-fork
+cmake --build build_macos -j8
+cd build_macos && ctest --output-on-failure        # expect 9/9
+```
+
+Knobs, all env-only:
+
+- `GE_FRAMES=n` — exit after n pumps. **A hw-pacing Dam run needs a time bound,
+  not a frame bound:** `GE_FRAMES=900 GE_STAGE=dam` is a ~4 minute run on the
+  software renderer, the audit found 420 never reaches the stage, and 225 was
+  measured here reaching only the menu (stage 90).
+- `GE_STAGE=dam`, `GE_HITCHMS=1` (log every frame), `GE_HWSCALE=3` (price holds
+  above the 8-field cap), `GE_HWDBG=1`, `GE_TICKHZ=120`, `GE_TICKMAXSTEP=n`,
+  `GE_NOINISAVE=1`.
+- `GE_CONCMD="cl_audio_log 1"` writes `Data/Logs/audio_pump.log`.
+
+Two rules for any run: **back up `build_macos/midas.ini` and diff it after** —
+it is the user's real file, and `maxfps=-1` + `tickhz=0` will be rewritten to
+`tickhz=hw` by the current build. And **do not touch `Data/Saves/`**; check
+`eeprom.bin`'s md5 before and after.
+
+A cheaper shape than a fixed `GE_FRAMES`: start the run in the background, poll
+the log for the lines you need, and stop it. The expensive part is every frame
+spent inside Dam (~890 ms), not the pumps needed to get there — a wait for
+twelve `credit` lines reached the stage and finished in 30 seconds.
+
+---
+
+## 7. The lesson worth carrying
+
+Four passes, alternating method, each finding what the previous could not see:
+
+- **Reading catches structure** — a wrong general rule, a counter named wrongly,
+  a document lying about its own commit state.
+- **Execution catches sentences about measured quantities** — `model held`
+  versus `fld` reading "healthy" while two thirds of wall time was discarded;
+  `f/s` reading 0.8 rather than 0; a healthy band of 59.3–62.9 where the docs
+  said 60.0.
+
+Neither alone has yet been enough on this branch, and the failure mode is
+specific and repeatable: **a fix verified on one shape of input, reported as the
+mechanism working.** `run8` was invalid because a write and a no-write looked
+identical. The F3-A first cut passed because the test file happened to list its
+two lines in the helpful order. The next pass's most likely defect is the same
+one.
