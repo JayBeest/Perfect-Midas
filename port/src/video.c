@@ -239,8 +239,13 @@ extern void gfx_set_aa(uint32_t msaa_level, uint32_t n64_aa); /* gfx_pc.cpp: lat
 static int videoClassicViOn(void); /* with the Classic parts table below */
 static void videoApplyAa(void)
 {
-    /* Classic Mode always runs the VI resolve: the composite pass and the soft
-     * upscale live there. The N64 AA part only switches its edge blend (gfx_vi_blend). */
+    /* The BIT decides whether the VI resolve runs at all - it is a render
+     * setting, and a player who wants N64 edges without 240p gets exactly this
+     * and nothing else. The MSAA FLOOR is the preset's: Classic Mode is the mode
+     * that promises a 4x resolve, so a bit-only player keeps whatever MSAA they
+     * chose (with videoApplyAa's own 2x minimum). That is why the two read
+     * different statics here, and it is the whole of the split inside this
+     * function. */
     const int vi = s_CfgN64Aa;
     const uint32_t floor_level = videoClassicViOn() ? 4u : 2u;
     uint32_t level = (s_CfgMsaa == 2 || s_CfgMsaa == 4 || s_CfgMsaa == 8) ? (uint32_t) s_CfgMsaa : 1u;
@@ -480,14 +485,24 @@ static s32 videoSceneMissionFresh(void);
 
 /* The render's line count (gfx_low_res) for this frame. Low Res applies on
  * mission frames only; Classic Mode also covers menus, rendering them at the
- * VI's own line count (e.g. 330 or 480) instead of squeezing to 240. */
+ * VI's own line count (e.g. 330 or 480) instead of squeezing to 240.
+ *
+ * DECIDED (Phase 3, the split's one genuinely ambiguous site): this reads the
+ * PRESET, not the AA bit. Rendering menus at the VI's line count is a promise
+ * of Classic Mode - the "classic" part is that the whole session, menus
+ * included, runs at N64 native resolution - and it is not something a player
+ * asking for edge blending has asked for. Gating it on the bit would have
+ * changed menu resolution for exactly the new player the split creates (bit on,
+ * preset off), which is a behaviour change invented by a refactor. Also kept
+ * deliberately: this preserves the OLD observable result exactly, because the
+ * preset is what the old key meant to every caller that asked this question. */
 static u32 videoRenderLines(s32 viy)
 {
     if (s_CfgLowRes && videoSceneMissionFresh())
     {
         return (u32) s_CfgLowRes;
     }
-    if (s_CfgN64Aa && viy > 0)
+    if (s_CfgClassicMode && viy > 0)
     {
         return (u32) viy;
     }
@@ -1007,10 +1022,20 @@ s32 portClassicPart(s32 i)
     return (i >= 0 && i < CLASSIC_PART_COUNT) ? ((s_CfgClassicParts >> i) & 1) : 0;
 }
 
-/* Classic Mode is on and its N64 AA part too: the VI edge blend runs (videoApplyAa) */
+/* Classic Mode is on and its N64 AA part too: the VI edge blend runs at the
+ * mode's 4x floor (videoApplyAa).
+ *
+ * DECIDED (Phase 3): the PRESET here, not the bit. This answers "does the mode
+ * promise the full N64 resolve", and the mode is the preset; the bit answers
+ * "run the resolve", in videoApplyAa above. Reading the bit here would have
+ * made the floor follow a render setting the preset may not even own (the
+ * classic_n64aa part can be off), and the old observable result - preset on,
+ * part on => 4x - is what this preserves. The helper survives the split for
+ * that reason: it is the conjunction of two things that are now separate keys,
+ * and naming it keeps videoApplyAa readable. */
 static int videoClassicViOn(void)
 {
-    return s_CfgN64Aa && portClassicPart(CLASSIC_PART_N64AA);
+    return s_CfgClassicMode && portClassicPart(CLASSIC_PART_N64AA);
 }
 
 /** 1 = the PRESET owns the AA bit: its classic_n64aa part is on, so turning
@@ -1022,11 +1047,14 @@ s32 portClassicSetsN64Aa(void)
     return portClassicPart(CLASSIC_PART_N64AA);
 }
 
-/** 1 while Classic Mode is on ([display] n64_aa, the classic_toggle key's state).
- *  Read by the -n64_aa boot flag, which reports whether its apply took. */
-s32 portVideoN64AaOn(void)
+/** 1 while Classic Mode is on ([display] classic_mode, the classic_toggle key's state).
+ *  Read by the -n64_aa boot flag, which reports whether its apply took, and by
+ *  the GE_TICKHZ clash report. Renamed from portVideoN64AaOn in the Phase 3
+ *  split: the old name said "the AA is on" and returned the preset, which is
+ *  how a render setting came to answer a mode question. */
+s32 portClassicModeOn(void)
 {
-    return s_CfgN64Aa;
+    return s_CfgClassicMode;
 }
 
 /** Load hitches are a Classic part; they still only happen under hardware pacing. */
@@ -1430,7 +1458,7 @@ static int s_MipmapsEnv = -1;   /* GE_HWMIPMAPS: -1 unset, else 0/1 */
 
 static u32 videoMipmapMode(void)
 {
-    const int on = (s_MipmapsEnv >= 0) ? s_MipmapsEnv : (s_CfgN64Aa && portClassicPart(CLASSIC_PART_MIPMAPS));
+    const int on = (s_MipmapsEnv >= 0) ? s_MipmapsEnv : (s_CfgClassicMode && portClassicPart(CLASSIC_PART_MIPMAPS));
 
     if (!on)
     {
@@ -1691,7 +1719,16 @@ s32 portVideoOptionSet(const char *key, s32 value)
     else if (SDL_strcasecmp(key, "n64_aa") == 0 || SDL_strcasecmp(key, "msaa") == 0)
     {
         videoApplyAa(); /* live: gfx_start_frame re-allocates the level framebuffer on the change (render thread: at its next frame start) */
-        videoApplyMipmaps(); /* Classic Mode carries the mipmaps */
+    }
+    else if (SDL_strcasecmp(key, "classic_mode") == 0)
+    {
+        /* The preset owns the MSAA floor (videoApplyAa) AND the mipmap mode
+         * (videoMipmapMode), so one key here covers both. The bit's own arm
+         * above stopped refreshing the mipmaps at the split: they no longer
+         * depend on it, and the choke point writes classic_mode before the bit
+         * it syncs, so the mipmaps are already right by the time n64_aa lands. */
+        videoApplyAa();
+        videoApplyMipmaps();
     }
     else if (videoClassicPartIndex(key) == CLASSIC_PART_N64AA)
     {
@@ -4931,7 +4968,7 @@ static PortBootFlags s_BootFlags;
 /* 1 when the flag was given, and the thing it asks for is not already true. */
 s32 videoBootClassicWanted(void)
 {
-    return s_BootFlags.n64_aa && s_CfgN64Aa == 0;
+    return s_BootFlags.n64_aa && s_CfgClassicMode == 0;
 }
 
 s32 videoBootAudioPump(void)
@@ -4985,13 +5022,15 @@ void videoParseBootArgs(int argc, char **argv)
  *
  * -n64_aa goes through portClassicToggle(), the same entry point as Tab, so a
  * flag launch and a keypress cannot drift apart: it is Classic Mode, all of it
- * (240p, maxfps=-1, MSAA, the pillars, the filter), not just the AA bit. The
- * GUARD matters: entering the mode saves the current values into classic_saved
- * before forcing its own, so entering when Classic Mode is already on would
- * overwrite the pre-classic snapshot with classic values and a later Tab-off
- * would have nothing to restore. `!s_CfgN64Aa` makes it idempotent - and the
- * option table's choke point (optSet) refuses a same-value set for the same
- * reason, so this is belt and braces rather than the only defence.
+ * (240p, maxfps=-1, MSAA, the pillars, the filter), not just the AA bit - which
+ * since the Phase 3 split is a separate key it happens to reach through the
+ * preset's classic_n64aa part. The GUARD matters: entering the mode saves the
+ * current values into classic_saved before forcing its own, so entering when
+ * Classic Mode is already on would overwrite the pre-classic snapshot with
+ * classic values and a later Tab-off would have nothing to restore.
+ * `!s_CfgClassicMode` makes it idempotent - and the option table's choke point
+ * (optSet) refuses a same-value set for the same reason, so this is belt and
+ * braces rather than the only defence.
  *
  * Consequence, stated rather than discovered: this WRITES midas.ini, exactly as
  * pressing Tab does, so the mode persists after the process exits. That is the
@@ -5008,7 +5047,7 @@ static void videoApplyBootArgs(void)
     {
         portClassicToggle();
         portConLogf("ge: video: -n64_aa -> Classic Mode on (%s)\n",
-                    portVideoN64AaOn() ? "applied" : "did not apply");
+                    portClassicModeOn() ? "applied" : "did not apply");
     }
     /* GE_TICKHZ wins the tick rate (portTickHz reads it before everything),
      * while Classic Mode sets up hardware pacing - and portTickHwPace() does not
@@ -5023,7 +5062,7 @@ static void videoApplyBootArgs(void)
      * Classic Mode was already on - from n64_aa=1 in midas.ini, or from a Tab
      * press in a previous session - which is the case a reader is least likely
      * to have in mind. */
-    if (portEnvTickClash(portVideoN64AaOn(), getenv("GE_TICKHZ") != NULL))
+    if (portEnvTickClash(portClassicModeOn(), getenv("GE_TICKHZ") != NULL))
     {
         portConLogf("ge: video: Classic Mode with GE_TICKHZ set - the tick rate is "
                     "GE_TICKHZ's, not hw pacing's 60, and holds are still priced.\n");
@@ -5062,7 +5101,20 @@ s32 videoInit(void)
      * underneath it, leaving Classic Mode's settings in force with Classic Mode
      * reported off. Reading the env first means the flag always sees the value it
      * is overriding. */
-    { /* [display] n64_aa: GE_N64AA=0/1 overrides the ini for A/B */
+    { /* [display] n64_aa (the AA BIT): GE_N64AA=0/1 overrides the ini for A/B.
+       *
+       * DECIDED (Phase 3): it sets the BIT and only the bit. The name says AA,
+       * and the preset now has its own key - so `GE_N64AA=1` no longer forces
+       * Classic Mode the way it did while one key meant both. That is a
+       * behaviour change, stated in CLI.md rather than left to be discovered by
+       * someone's A/B script silently measuring something else.
+       *
+       * No GE_CLASSICMODE is added beside it, deliberately: the preset has a key
+       * and a boot flag, and a preset applied from an environment variable
+       * would have to run the transition - which snapshots the player's values
+       * and WRITES midas.ini. The GE_* knobs in videoInit are values, not
+       * actions; -n64_aa already exists for the action, and it says what it
+       * writes. */
         extern char *getenv(const char *);
         const char *e = getenv("GE_N64AA");
         if (e != NULL)
@@ -5250,7 +5302,7 @@ s32 videoInit(void)
              * that reports itself on. It still wins - it is a diagnostic - but it
              * does not win silently. Nothing else logs the mipmap mode, so this
              * line is the only way to see the contradiction. */
-            if (portEnvMipmapClash(s_CfgN64Aa, portClassicPart(CLASSIC_PART_MIPMAPS), s_MipmapsEnv))
+            if (portEnvMipmapClash(s_CfgClassicMode, portClassicPart(CLASSIC_PART_MIPMAPS), s_MipmapsEnv))
             {
                 portConLogf("ge: video: GE_HWMIPMAPS=0 with Classic Mode on - mipmaps off "
                             "for this run, though Classic Mode turns them on\n");
@@ -5812,7 +5864,7 @@ s32 portPausePillars(void)
  * of Classic Mode, not of the Pause Pillars option. */
 s32 portClassicPillars(void)
 {
-    return s_CfgN64Aa && portClassicPart(CLASSIC_PART_PILLARS);
+    return s_CfgClassicMode && portClassicPart(CLASSIC_PART_PILLARS);
 }
 
 /** midas.ini [display] always_crosshair (GE_ALWAYSCROSSHAIR=0/1 forces) - the
