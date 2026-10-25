@@ -4923,28 +4923,31 @@ static void videoApplyBootArgs(void)
     extern void portClassicToggle(void);    /* port_options.c; weak absent headless */
     extern void portAudioPumpStatsSet(s32 on);  /* audio_pc.c */
     extern void portAudioPumpLogSet(s32 on);    /* audio_pc.c */
+    extern char *getenv(const char *);
 
     if (videoBootClassicWanted())
     {
-        extern char *getenv(const char *);
-
         portClassicToggle();
         portConLogf("ge: video: -n64_aa -> Classic Mode on (%s)\n",
                     portVideoN64AaOn() ? "applied" : "did not apply");
-
-        /* GE_TICKHZ wins the tick rate (portTickHz reads it before everything),
-         * while Classic Mode has just set up hardware pacing - and
-         * portTickHwPace() does not look at the rate, so the hold is still
-         * priced. The result is a raised tick under a hw hold, which is not a
-         * documented mode. It is left permitted rather than refused - both knobs
-         * are diagnostics and a reader may be measuring exactly that - but it is
-         * never silent, because a mode that exists only by accident is the
-         * defect class this branch keeps finding. */
-        if (getenv("GE_TICKHZ") != NULL)
-        {
-            portConLogf("ge: video: -n64_aa with GE_TICKHZ set - the tick rate is "
-                        "GE_TICKHZ's, not hw pacing's 60, and holds are still priced.\n");
-        }
+    }
+    /* GE_TICKHZ wins the tick rate (portTickHz reads it before everything),
+     * while Classic Mode sets up hardware pacing - and portTickHwPace() does not
+     * look at the rate, so the hold is still priced. The result is a raised tick
+     * under a hw hold, which is not a documented mode. It is left permitted
+     * rather than refused - both knobs are diagnostics and a reader may be
+     * measuring exactly that - but it is never silent, because a mode that
+     * exists only by accident is the defect class this branch keeps finding.
+     *
+     * The test is the RESULTING state, not the boot flag: gating it on
+     * videoBootClassicWanted() left the identical combination silent whenever
+     * Classic Mode was already on - from n64_aa=1 in midas.ini, or from a Tab
+     * press in a previous session - which is the case a reader is least likely
+     * to have in mind. */
+    if (portVideoN64AaOn() && getenv("GE_TICKHZ") != NULL)
+    {
+        portConLogf("ge: video: Classic Mode with GE_TICKHZ set - the tick rate is "
+                    "GE_TICKHZ's, not hw pacing's 60, and holds are still priced.\n");
     }
     if (s_BootFlags.audio_pump)
     {
