@@ -12778,7 +12778,13 @@ static Gfx *portDrawAudioPumpStats(Gfx *gdl, s32 x, s32 y)
      * taken from SPACE_WIDTH because textMeasure carries port_text_scale, and
      * the pad has to grow with the glyphs or it collapses at other scales.
      * The text moves IN by that pad so the corner plate stays where it was;
-     * padding outward instead would push it off the top-left of the screen. */
+     * padding outward instead would push it off the top-left of the screen.
+     *
+     * THREE sides come from `top` and one from `ty` on purpose: the box's last
+     * row ends a full PORT_APU_ROW below the text's own bottom, so measuring
+     * the fourth edge from `top` gave it no pad at all while the other three
+     * had one. `ty` is where the text actually starts, so padding from it is
+     * the only version that matches. */
     {
         static char padchar[] = "0";   /* textMeasure takes char *, and digits dominate the block */
         s32 maxw = 0;
@@ -12800,7 +12806,7 @@ static Gfx *portDrawAudioPumpStats(Gfx *gdl, s32 x, s32 y)
         tx = x + pad;
         ty = top + pad;
         gdl = microcode_constructor_related_to_menus(gdl, x, top, tx + maxw + pad,
-                                                     top + rows * PORT_APU_ROW + pad, 0x64);
+                                                     ty + rows * PORT_APU_ROW + pad, 0x64);
     }
     for (i = 0; i < rows; i++)
     {
