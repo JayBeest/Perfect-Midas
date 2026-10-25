@@ -5043,6 +5043,49 @@ s32 videoInit(void)
      * has to be in place before gfx_init. */
     videoApplyBootArgs();
 
+    /* Classic Mode reported on, but its settings are not the classic ones.
+     *
+     * Three doors reach this state and none of them runs the preset: a
+     * hand-edited n64_aa=1, GE_N64AA=1, and an env override applied while the
+     * mode was already on. The -n64_aa flag cannot repair any of them - its
+     * videoBootClassicWanted() guard declines to act on a mode that is already
+     * on, which is correct, because re-entering would overwrite the player's
+     * saved values with the forced ones. So the half-state is named here rather
+     * than silently run, and `cl_classic fix` is the repair.
+     *
+     * This is the only place both the ini value and the env override are
+     * visible, which is why the check lives here and not in the loader. */
+    {
+        extern s32 portClassicMismatchParts(s32 *idx, s32 max);
+        extern const char *portClassicKey(s32 i);
+        s32 idx[16];
+        s32 n;
+        s32 i;
+
+        n = portClassicMismatchParts(idx, (s32) (sizeof(idx) / sizeof(idx[0])));
+        if (n > 0)
+        {
+            char names[192];
+            size_t at = 0;
+
+            names[0] = '\0';
+            for (i = 0; i < n && i < (s32) (sizeof(idx) / sizeof(idx[0])); i++)
+            {
+                const char *k = portClassicKey(idx[i]);
+                const int wrote = snprintf(names + at, sizeof(names) - at, "%s%s",
+                                           (at > 0) ? ", " : "", (k != NULL) ? k : "?");
+
+                if (wrote <= 0 || (size_t) wrote >= sizeof(names) - at)
+                {
+                    break;   /* truncated: the count is still right */
+                }
+                at += (size_t) wrote;
+            }
+            portConLogf("ge: video: Classic Mode is on but %d of its settings are not classic (%s)"
+                        " - `cl_classic fix` repairs it\n", (int) n, names);
+        }
+    }
+
     { /* GE_WINDOW=WxH: override midas.ini window size (automated capture runs
        * verify widescreen without editing the user's config) */
         const char *e = getenv("GE_WINDOW");

@@ -26,6 +26,7 @@
 #include <stdlib.h> /* atexit: portOptSaveHold's quit-time flush */
 #include <string.h>
 #include <ultra64.h>
+#include "classic_mode.h"   /* the forced-values rule, as a pure function */
 #include "port_options.h"
 
 /* strong on the owning side, weak no-op in libultra_shim.c */
@@ -1557,4 +1558,102 @@ void portClassicToggle(void)
     {
         portClassicSetLive(now);
     }
+}
+
+/* ---- the rule, applied ---------------------------------------------------
+ *
+ * port/src/classic_mode.c holds the rule itself (what is remembered, what is
+ * forced, what is given back) as pure functions with a test. Everything below
+ * is the adapter: it reads the live tables into a ClassicInput and writes a
+ * ClassicPlan back out. Kept here because this file owns the two tables the
+ * rule needs - sClassicKeys/sClassicVals and the CLASSIC sheet's part rows.
+ */
+
+/** Live state into `in`, for op/mode_on supplied by the caller. */
+static void classicInputFill(ClassicInput *in, s32 parts[CLASSIC_MODE_MAX],
+                             s32 classic[CLASSIC_MODE_MAX], s32 current[CLASSIC_MODE_MAX],
+                             s32 saved[CLASSIC_MODE_MAX])
+{
+    extern s32  portVideoClassicSavedGet(s32 *v) __attribute__((weak));
+    const s32 aa = portOptFind("n64_aa");
+    s32 i;
+
+    for (i = 0; i < PORTCLASSIC_COUNT; i++)
+    {
+        parts[i] = portClassicPartOn(i);
+        classic[i] = sClassicVals[i];
+        current[i] = portOptGet(portOptFind(sClassicKeys[i]));
+    }
+    in->mode_on = (aa >= 0) ? (portOptGet(aa) != 0) : 0;
+    in->parts_on = parts;
+    in->classic = classic;
+    in->current = current;
+    in->saved_n = (portVideoClassicSavedGet != NULL) ? portVideoClassicSavedGet(saved) : 0;
+    in->saved = saved;
+    in->n = PORTCLASSIC_COUNT;
+}
+
+/** Land a plan: the snapshot first (it records what the writes overwrite), then
+ * the writes in the plan's order. One ini write, as portClassicSetLive does. */
+static void classicPlanApply(const ClassicPlan *p)
+{
+    extern void portVideoClassicSavedSet(const s32 *v) __attribute__((weak));
+    s32 i;
+
+    if (p->snapshot && portVideoClassicSavedSet != NULL)
+    {
+        portVideoClassicSavedSet(p->saved);
+    }
+    for (i = 0; i < p->write_n; i++)
+    {
+        portOptSetValueQuiet(portOptFind(sClassicKeys[p->write_idx[i]]), p->write_val[i]);
+    }
+    if (p->snapshot || p->write_n > 0)
+    {
+        portOptSave();
+    }
+}
+
+/** How many of Classic Mode's parts are live but not at the classic value.
+ *
+ * Fills idx[0..returned) with the part indices so a caller can name them.
+ * 0 when the mode is consistent OR off: nothing is forced then, so nothing can
+ * be wrong. This is the check the boot report and `cl_classic` print.
+ */
+s32 portClassicMismatchParts(s32 *idx, s32 max)
+{
+    s32 parts[CLASSIC_MODE_MAX], classic[CLASSIC_MODE_MAX], current[CLASSIC_MODE_MAX];
+    s32 saved[CLASSIC_MODE_MAX];
+    ClassicInput in;
+    s32 n;
+
+    classicInputFill(&in, parts, classic, current, saved);
+    if (!in.mode_on)
+    {
+        return 0;
+    }
+    n = portClassicMismatch(in.parts_on, in.classic, in.current, in.n, idx);
+    (void) max;   /* the buffer is the caller's promise: CLASSIC_MODE_MAX entries */
+    return n;
+}
+
+/**
+ * Repair in place: force what the mode should own, restore what it should have
+ * given back, and remember nothing. This is CLASSIC_OP_FIX - see classic_mode.h
+ * for why a repair must never re-snapshot.
+ *
+ * Returns the number of values written (0 = already consistent).
+ */
+s32 portClassicRepair(void)
+{
+    s32 parts[CLASSIC_MODE_MAX], classic[CLASSIC_MODE_MAX], current[CLASSIC_MODE_MAX];
+    s32 saved[CLASSIC_MODE_MAX];
+    ClassicInput in;
+    ClassicPlan plan;
+
+    classicInputFill(&in, parts, classic, current, saved);
+    in.op = CLASSIC_OP_FIX;
+    portClassicPlan(&in, &plan);
+    classicPlanApply(&plan);
+    return plan.write_n;
 }

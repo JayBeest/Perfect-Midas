@@ -453,6 +453,95 @@ static void conCmdClient(const char *name, const char *value)
         conPrintLn(0, "usage: cl_<setting> [value] - try: list");
         return;
     }
+    if (conStrEqI(name, "classic"))
+    {
+        /* Classic Mode's state, and the repair for a half-applied one.
+         *
+         * This verb exists because four entry points leave the mode on with
+         * values that are not classic - a hand-edited n64_aa=1, GE_N64AA=1, an
+         * env override applied while the mode was already on, and (until the
+         * next commit) this console's own cl_n64_aa. -n64_aa cannot repair any
+         * of them: it declines to act on a mode that is already on, because
+         * re-entering would overwrite the player's saved values with the forced
+         * ones. So repair is its own operation, and it remembers nothing. */
+        extern s32         portClassicMismatchParts(s32 *idx, s32 max);
+        extern s32         portClassicRepair(void);
+        extern s32         portClassicCount(void);
+        extern const char *portClassicKey(s32 i);
+        extern void        portClassicSetLive(s32 on);
+        extern s32         portOptSetValue(s32 i, s32 v);
+        extern s32         portOptGet(s32 i);
+        const s32 aa = portOptFind("n64_aa");
+        const s32 on = (aa >= 0) && portOptGet(aa) != 0;
+
+        if (value != NULL && conStrEqI(value, "fix"))
+        {
+            const s32 wrote = portClassicRepair();
+
+            portConPrintf(1, "cl_classic: %s (%d value%s)\n",
+                          (wrote > 0) ? "repaired" : "already consistent", (int) wrote,
+                          (wrote == 1) ? "" : "s");
+            return;
+        }
+        if (value != NULL && (conStrEqI(value, "on") || conStrEqI(value, "off")))
+        {
+            const s32 want = conStrEqI(value, "on") != 0;
+
+            if (aa < 0)
+            {
+                portConPrintf(1, "cl_classic: no n64_aa row\n");
+                return;
+            }
+            if (want == on)
+            {   /* a transition, not a repair: re-entering would retake the
+                 * snapshot, so "already on" must not do the work again */
+                portConPrintf(1, "cl_classic = %s (already)\n", on ? "on" : "off");
+                return;
+            }
+            if (portOptSetValue(aa, want))
+            {
+                portClassicSetLive(want);
+            }
+            portConPrintf(1, "cl_classic = %s\n", want ? "on" : "off");
+            return;
+        }
+
+        /* status: the flag, the parts, and how many of them disagree. */
+        {
+            s32 idx[16];
+            s32 n;
+            s32 i;
+            char list[192];
+
+            n = portClassicMismatchParts(idx, (s32) (sizeof(idx) / sizeof(idx[0])));
+            list[0] = '\0';
+            for (i = 0; i < n; i++)
+            {
+                char one[32];
+
+                snprintf(one, sizeof(one), "%s%s", (i > 0) ? ", " : "",
+                         (idx[i] >= 0) ? portClassicKey(idx[i]) : "?");
+                if (strlen(list) + strlen(one) < sizeof(list))
+                {
+                    strcat(list, one);
+                }
+            }
+            if (n > 0)
+            {
+                portConPrintf(0, "cl_classic = on, %d of %d settings not classic (%s)\n",
+                              (int) n, (int) portClassicCount(), list);
+            }
+            else
+            {
+                portConPrintf(0, "cl_classic = %s\n", on ? "on, consistent" : "off");
+            }
+            if (value != NULL && !conStrEqI(value, "status"))
+            {
+                conPrintLn(1, "usage: cl_classic [status|fix|on|off]");
+            }
+            return;
+        }
+    }
     if (conStrEqI(name, "fadedbg"))
     {   /* propobj.c: log each object's visibility verdict as it changes */
         extern void portFadeDbgSet(s32 on);

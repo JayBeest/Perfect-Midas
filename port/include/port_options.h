@@ -6,4 +6,9 @@ s32 portOptSetIni(s32 i, const char *text);
 s32 portIniWriteStrs(const char *section, const char *const *keys, const char *const *vals, s32 n);
 s32 portVideoIniSetKey(const char *key, const char *value);
 s32 portCrosshairColor(void);
+
+/* Classic Mode's mismatch and repair (port_options.c; the rule itself is in
+ * classic_mode.h). Neither turns the mode on or off, and neither re-snapshots. */
+s32 portClassicMismatchParts(s32 *idx, s32 max);
+s32 portClassicRepair(void);
 #endif
