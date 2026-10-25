@@ -569,4 +569,12 @@ if(GE_PORT_TESTS)
     # explicitly - there is no glob in this block.
     add_executable(classic_mode_test port/tests/classic_mode.c port/src/classic_mode.c)
     add_test(NAME classic_mode COMMAND classic_mode_test)
+
+    # ...and that the SETTER actually calls the rule. The audit's console defect
+    # was a missing call at that seam, which no test of the rule can see. This
+    # links the shipped port_options.c against a fake option table, so the real
+    # sOpts rows, portOptFind, optSet and portClassicSetLive all run.
+    add_executable(port_options_n64aa_test
+        port/tests/port_options_n64aa.c port/src/port_options.c port/src/classic_mode.c)
+    add_test(NAME port_options_n64aa COMMAND port_options_n64aa_test)
 endif()
