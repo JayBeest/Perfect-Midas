@@ -104,8 +104,12 @@ or `Data/Saves/` may be left changed — same backup/restore and md5 discipline 
 
 ## 0. State you are inheriting
 
-Branch `tick-field-accounting`, base `3a1ab62`. **Do not trust a commit count
-written in this file** — derive it: `git rev-list --count 3a1ab62..HEAD`.
+Branch `diagnostic-launch-kit`, based on `tick-field-accounting`, which is based
+on `3a1ab62`. See the topology below — the three-level shape matters.
+**Do not trust a commit count written in this file** — derive it:
+`git rev-list --count 3a1ab62..HEAD` (28 at the time of writing, and reading a
+number instead of running that command is how this branch miscounted itself five
+times).
 
 Baseline, measured at the tip:
 
@@ -116,8 +120,41 @@ ctest   10/10   (native_layout, native_collision, native_aim, native_stan,
                  audio_pace, boot_flags, tick_stats)
 ```
 
-**Unpushed.** `origin/audio-pump-wallclock_gen4` is at `3a1ab62`; the branch
-exists only locally. Nothing has been through CI.
+**Push state — check it, do not trust this paragraph.** `origin/tick-field-accounting`
+exists and is the base of this branch; whether it is level with the local ref
+depends on who pushed last. Nothing has been through CI. At the time of writing:
+
+```
+git rev-parse --short origin/tick-field-accounting   # was ec848d4 (22 commits)
+git log --oneline -1 origin/diagnostic-launch-kit     # did not exist yet
+```
+
+**THIS BRANCH IS THE SECOND OF TWO.** `NEXT_LEVEL_AGENT.md` lives here, not on
+`tick-field-accounting`, because the session that wrote it also produced the
+five commits above it. The topology:
+
+```
+3a1ab62 ── 23 commits ── tick-field-accounting (ef44204)   the tick accounting
+                              └─ 5 commits ── diagnostic-launch-kit (HEAD)   the
+                                              boot flags, harnesses, this file
+```
+
+Consequences worth knowing before you start:
+
+- **The practical base for new work is this branch's tip**, not `3a1ab62`. The
+  three-level chain above is still true transitively, but rebasing onto
+  `3a1ab62` would lose the boot flags and the harnesses.
+- **If `tick-field-accounting` is squash-merged, this branch's base disappears**
+  and it needs a rebase. That is the branch's own reopen condition for the
+  folding question, and it is not pre-solved.
+- **`CLI.md` here is a superset of the one on `tick-field-accounting`.** The
+  earlier branch describes `GE_WINDOW` as "the capture/harness switch" that
+  overrides the window size — true, but it does not say the name misleads: it
+  does **not** change the display mode. The clarification is §7.1 here, and it
+  was left on this branch on purpose rather than back-ported, because the same
+  paragraph carries the boot flags.
+- Two reports sit untracked at the repo root: `PR_tick-field-accounting.md` and
+  `PR_diagnostic-launch-kit.md`. They are paste sources, not diffs.
 
 Read first, in this order:
 
