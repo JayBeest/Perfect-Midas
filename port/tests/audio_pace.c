@@ -8,7 +8,7 @@
  * Two of these cases exist because the first cut of the policy passed every
  * test it had and still starved a real device:
  *
- *   - test_simulation_holds_the_queue_with_bounded_refill: a wall-clock pace
+ *   - test_simulation_holds_the_queue: a wall-clock pace
  *     plus a bounded queue bias looks right and cannot converge, because the
  *     queue level is then a constant of integration. Measured on hardware it
  *     sat at 1.2-3.6 KB against a 10 KB target.
@@ -419,115 +419,265 @@ static void test_geometry_saturates_instead_of_wrapping(void)
 
 /* ---- closed-loop simulation -------------------------------------------- */
 
+/*
+ * ONE harness. Until 2026-10-25 there were two, with different physics: the
+ * constant-interval one below refilled and then drained, and a second, jittered
+ * one in the game's order. Two models of the same pump is a hazard by itself -
+ * a case written against the wrong one proves nothing - so the cadence, the
+ * jitter, the policy rule and the ORDER are all fields of one scenario now.
+ *
+ * THE ORDER IS THE POINT. portAudioPump() runs AFTER the interval has elapsed:
+ * the device has already drained the queue, and the pump then measures that
+ * depth and refills toward the target. So does this model. Refilling first tops
+ * the queue up before it can be emptied, which makes starvation unobservable at
+ * any frame rate under any jitter - measured, not argued: on the same scenario
+ * and the same rule, refill-first gives dry=0 and the game's order gives dry=27
+ * (see test_harness_order_decides_whether_a_starve_is_visible, which keeps the
+ * wrong order as its own evidence). And a cadence that never varies cannot
+ * starve even in the right order, because a pump that measures the interval it
+ * just lost sizes the queue for it. Both blind spots are why the pump's real
+ * ratchet defect survived every case in this file.
+ */
 typedef struct {
-    unsigned min_bytes;
-    unsigned max_bytes;
+    unsigned min_bytes; /* the shallowest depth a pump OPENED with (post-drain) */
+    unsigned max_bytes; /* the deepest depth a pump LEFT behind (post-refill) */
+    unsigned end_bytes; /* the depth when the last pump closed */
     unsigned dry;       /* pumps that found the queue empty, after priming */
     long long rendered; /* samples synthesised */
     long long consumed; /* samples the device played */
 } SimResult;
 
-/*
- * Pump at `fps` against a device that plays at (1 + ppm/1e6) * RATE for
- * `seconds` of wall time. The device model is the simplest honest one: whatever
- * is queued drains at its own rate, and an empty queue means it played silence.
+/* One closed-loop scenario. Every field is explicit: the cadence is the
+ * variable these cases exist to vary, and a default that quietly picks one is
+ * how the constant-interval blind spot got built. */
+typedef struct {
+    unsigned fps;         /* != 0: derive each interval from fps, as the constant
+                           * cases always have (ms_acc, so 60 fps is 16/17/17 ms).
+                           * 0: use base_ms. */
+    unsigned base_ms;     /* constant pump interval when fps == 0 */
+    unsigned jitter_pct;  /* per-pump +/- this percent of the interval; 0 = none */
+    unsigned spike_every; /* every Nth pump takes spike_ms; 0 = none */
+    unsigned spike_ms;
+    unsigned seconds;
+    unsigned start_bytes;
+    unsigned cap;         /* extra floor for the cap; 0 = let the policy size it */
+    long drift_ppm;       /* device rate error, parts per million */
+    int use_effective;    /* 1: portAudioPaceEffectiveTarget - what the pump runs.
+                           * 0: max(ratcheted, floor) - the rule before df881c9. */
+    int refill_first;     /* 1: refill BEFORE the drain. NOT the pump's order;
+                           * only for the order-sensitivity evidence. */
+} SimScenario;
+
+/* Refill toward `target_eff` one aligned frame at a time, bounded by `cap_eff`.
+ * The device model's opening depth comes from the caller, so this only fills. */
+static void simRefill(PortAudioPaceClock *c, unsigned *queued, unsigned pump_ms,
+                      unsigned target_eff, unsigned cap_eff, SimResult *out)
+{
+    while (1) {
+        unsigned n = portAudioPaceFrame(c, pump_ms, *queued, target_eff, 1, &cfg);
+        unsigned bytes;
+
+        if (n == 0) {
+            break;
+        }
+        bytes = n * BYTES_PER_SAMPLE;
+        if (*queued + bytes > cap_eff) {
+            break; /* over the cap: rendered but not queued */
+        }
+        *queued += bytes;
+        out->rendered += (long long) n;
+    }
+}
+
+/* The device plays for `pump_ms` at its own rate, stopping when the queue runs
+ * out - it played silence from then on, which is what the caller counts as dry.
+ * Signed: a negative drift must subtract, not wrap. */
+static void simDrain(unsigned *queued, unsigned pump_ms, long drift_ppm,
+                     long long *consumed_acc, long long *consumed)
+{
+    *consumed_acc += (long long) pump_ms * (long long) RATE
+                   + (long long) drift_ppm * (long long) pump_ms * (long long) RATE / 1000000;
+    while (*consumed_acc >= 1000) {
+        unsigned long long take = (unsigned long long) (*consumed_acc / 1000);
+
+        *consumed_acc -= (long long) take * 1000;
+        if (take > *queued / BYTES_PER_SAMPLE) {
+            take = *queued / BYTES_PER_SAMPLE; /* cannot play what is not queued */
+        }
+        *queued -= (unsigned) (take * BYTES_PER_SAMPLE);
+        *consumed += (long long) take;
+    }
+}
+
+/* A bounded, deterministic re-draw of an interval: +/- pct percent, in whole ms,
+ * from a hash of the pump index so a failure reproduces exactly.
+ *
+ * It is NOT a model of a frame-time distribution - real frame times have a tail
+ * - it exercises the one property the queue has to absorb: the next interval is
+ * not the one the last pump measured, and the pump does not find that out until
+ * the device has already played. Bounded deliberately; an unbounded interval is
+ * a hitch, not a frame rate, and no queue size covers one (audio-pump-history.md
+ * section 9). */
+static unsigned jitteredMs(unsigned base_ms, unsigned pct, unsigned i)
+{
+    unsigned span = base_ms * pct / 100u;
+    unsigned h;
+    int delta;
+
+    if (span == 0) {
+        return base_ms;
+    }
+    h = i * 2654435761u + 0x9e3779b9u;
+    h ^= h >> 15;
+    h *= 2246822519u;
+    h ^= h >> 13;
+    delta = (int) (h % (2u * span + 1u)) - (int) span;
+
+    return (unsigned) ((int) base_ms + delta);
+}
+
+/* One run of the scenario. What it does NOT model, so that no case mistakes
+ * silence for coverage:
+ *
+ *   - the drain watchdog (`portAudioPaceDrainObserve`). It has its own cases
+ *     below, and the pump's use of it does not move the queue.
+ *   - the pump's per-pump render count (`PORT_AUDIO_MAX_FRAMES_PER_PUMP`): the
+ *     refill loop here is unbounded, which is generous at single-digit frame
+ *     rates and never binds at 60.
+ *   - the real cadence. The pump is called from the retrace-duty gate in
+ *     `port/src/pcsched.c` and from forced-frame paths, so *one pump per frame*
+ *     is an approximation; every case here assumes exactly that, and none
+ *     depends on anything subtler.
  */
-static void simulate(unsigned fps, long drift_ppm, unsigned seconds,
-                     SimResult *out, unsigned start_bytes, unsigned cap)
+static void simulateScenario(const SimScenario *s, SimResult *out)
 {
     PortAudioPaceClock c;
-    PortAudioPaceDrain d = {0, 0, 0, 0};
+    PortAudioPaceTarget t = {0, 0};
     long long consumed_acc = 0; /* samples x 1000 */
-    unsigned queued;
-    unsigned now_ms = 0;
+    unsigned queued = s->start_bytes;
     unsigned ms_acc = 0;
+    unsigned pumps = (s->fps != 0) ? s->fps * s->seconds
+                                  : (s->seconds * 1000u) / s->base_ms;
     unsigned i;
-    unsigned steps = fps * seconds;
     int primed = 0;
 
     portAudioPaceClockReset(&c);
     out->min_bytes = 0xFFFFFFFFu;
     out->max_bytes = 0;
+    out->end_bytes = queued;
     out->dry = 0;
     out->rendered = 0;
     out->consumed = 0;
-    queued = start_bytes;
 
-    for (i = 0; i < steps; i++) {
-        unsigned opened = queued;
-        unsigned closed;
-        unsigned pump_ms; /* the pump interval, for the device model */
+    for (i = 0; i < pumps; i++) {
+        unsigned pump_ms;
+        unsigned floor_bytes;
+        unsigned target_eff;
+        unsigned cap_eff;
+        unsigned opened;
+        unsigned filled;
+        unsigned ran_dry;
 
-        ms_acc += 1000;
-        pump_ms = ms_acc / fps;
-        ms_acc -= pump_ms * fps;
-
-        /* Refill toward the target, as the pump does with a live device. The
-         * effective target is never below one pump interval: a shallower one
-         * starves every pump by construction. */
-        {
-            unsigned target_eff = TARGET;
-            unsigned floor_bytes = portAudioPaceMinTarget(pump_ms, &cfg);
-            unsigned cap_eff;
-
-            if (floor_bytes > target_eff) {
-                target_eff = floor_bytes;
-            }
-            cap_eff = portAudioPaceCap(target_eff, &cfg);
-            if (cap != 0 && cap > cap_eff) {
-                cap_eff = cap;
-            }
-
-            while (1) {
-                unsigned n = portAudioPaceFrame(&c, pump_ms, queued, target_eff, 1, &cfg);
-                unsigned bytes;
-
-                if (n == 0) {
-                    break;
-                }
-                bytes = n * BYTES_PER_SAMPLE;
-                if (queued + bytes > cap_eff) {
-                    break; /* over the cap: rendered but not queued */
-                }
-                queued += bytes;
-                out->rendered += n;
-            }
+        if (s->fps != 0) {
+            ms_acc += 1000u;
+            pump_ms = ms_acc / s->fps;
+            ms_acc -= pump_ms * s->fps;
+        } else {
+            pump_ms = s->base_ms;
+        }
+        if (s->jitter_pct != 0) {
+            pump_ms = jitteredMs(pump_ms, s->jitter_pct, i);
+        }
+        if (s->spike_every != 0 && ((i + 1u) % s->spike_every) == 0) {
+            pump_ms = s->spike_ms;
         }
 
-        closed = queued;
-        (void) portAudioPaceDrainObserve(&d, opened, closed, now_ms, &cfg);
+        /* The target the pump steers toward, computed from the interval it just
+         * measured - the same two rules portAudioPump() chooses between. */
+        floor_bytes = portAudioPaceMinTarget(pump_ms, &cfg);
+        target_eff = s->use_effective
+                   ? portAudioPaceEffectiveTarget(floor_bytes, t.target, &cfg)
+                   : ((floor_bytes > t.target) ? floor_bytes : t.target);
+        cap_eff = portAudioPaceCap(target_eff, &cfg);
+        if (s->cap > cap_eff) {
+            cap_eff = s->cap;
+        }
 
-        if (!primed && closed > 0) {
-            primed = 1;
-        } else if (primed && opened == 0) {
+        if (s->refill_first) {
+            /* The old harness's shape: top the queue up first, so it cannot be
+             * empty when it is measured. Evidence only. */
+            opened = queued;
+        } else {
+            /* The pump's shape: the interval has elapsed and the device has
+             * already played, so this is the depth the pump measures. */
+            simDrain(&queued, pump_ms, s->drift_ppm, &consumed_acc, &out->consumed);
+            opened = queued;
+        }
+
+        ran_dry = (primed && opened == 0) ? 1u : 0u;
+        if (ran_dry) {
             out->dry++;
         }
-        if (primed) {
-            if (queued < out->min_bytes) {
-                out->min_bytes = queued;
-            }
-            if (queued > out->max_bytes) {
-                out->max_bytes = queued;
-            }
+        /* One ratchet step per pump in BOTH orders, at the same point, so a
+         * comparison never measures the stepping as well as the rule. */
+        t.target = portAudioPaceTargetStep(&t, (int) ran_dry, 0, &cfg);
+
+        simRefill(&c, &queued, pump_ms, target_eff, cap_eff, out);
+        filled = queued;
+
+        if (s->refill_first) {
+            simDrain(&queued, pump_ms, s->drift_ppm, &consumed_acc, &out->consumed);
         }
 
-        /* The device plays for pump_ms at its own rate. Signed: a negative
-         * drift must subtract, not wrap. */
-        consumed_acc += (long long) pump_ms * (long long) RATE
-                      + (long long) drift_ppm * (long long) pump_ms * (long long) RATE / 1000000;
-        while (consumed_acc >= 1000) {
-            unsigned long long take = (unsigned long long) (consumed_acc / 1000);
-
-            consumed_acc -= (long long) take * 1000;
-            if (take > queued / BYTES_PER_SAMPLE) {
-                take = queued / BYTES_PER_SAMPLE;
+        if (!primed) {
+            /* The pump that first leaves audio in the queue is the cold start:
+             * a freshly opened device IS empty, and the ratchet's own contract
+             * says that is not an underrun. It primes the window rather than
+             * contributing to it, the same way it is excluded from `dry`. */
+            if (filled > 0) {
+                primed = 1;
             }
-            queued -= (unsigned) (take * BYTES_PER_SAMPLE);
-            out->consumed += (long long) take;
+        } else {
+            if (opened < out->min_bytes) {
+                out->min_bytes = opened;
+            }
+            if (filled > out->max_bytes) {
+                out->max_bytes = filled;
+            }
         }
-
-        now_ms += pump_ms;
+        out->end_bytes = queued;
     }
+}
+
+/* Samples rendered minus samples consumed, less the queue's own growth: zero
+ * when nothing was dropped and nothing was duplicated.
+ *
+ * Stating the balance is stronger than a tolerance on rendered-versus-consumed,
+ * because the balance is the property that matters and the raw difference is not
+ * - a run that ends with a deeper queue than it started has rendered more than
+ * it played, and that is not a rate error. The old frame-sized slack hid exactly
+ * that at low frame rates, where one target change is thousands of samples. */
+static long long simUnaccounted(const SimResult *r, unsigned start_bytes)
+{
+    return (r->rendered - r->consumed)
+         - (((long long) r->end_bytes - (long long) start_bytes) / (long long) BYTES_PER_SAMPLE);
+}
+
+/* The constant-interval cases below, as one call. Same cadence arithmetic as
+ * before; what changed is that the depth they read is the depth the pump sees
+ * rather than the depth it left. */
+static void simulate(unsigned fps, long drift_ppm, unsigned seconds,
+                     SimResult *out, unsigned start_bytes, unsigned cap)
+{
+    SimScenario s = {0};
+
+    s.fps = fps;
+    s.seconds = seconds;
+    s.start_bytes = start_bytes;
+    s.cap = cap;
+    s.drift_ppm = drift_ppm;
+    s.use_effective = 1;
+    simulateScenario(&s, out);
 }
 
 static void test_simulation_holds_the_queue(void)
@@ -540,8 +690,8 @@ static void test_simulation_holds_the_queue(void)
     CHECK(r.min_bytes > TARGET / 2);
     CHECK(r.max_bytes < TARGET + MAX_FRAME * BYTES_PER_SAMPLE);
     /* Render rate equals the DAC's rate: audio time is the device's time. */
-    CHECK(r.rendered > r.consumed - (long long) MAX_FRAME);
-    CHECK(r.rendered < r.consumed + (long long) MAX_FRAME);
+    CHECK(simUnaccounted(&r, TARGET) > -(long long) MAX_FRAME);
+    CHECK(simUnaccounted(&r, TARGET) < (long long) MAX_FRAME);
 }
 
 static void test_simulation_refills_a_dry_start(void)
@@ -551,11 +701,13 @@ static void test_simulation_refills_a_dry_start(void)
     /* A device that opens empty must be filled, not left starved. */
     simulate(60, 0, 10, &r, 0, CAP);
 
-    /* Strictly: the first pump with a sink fills to the target, so the depth is
-     * already above half the target. (simulate() samples this AFTER the refill
-     * and BEFORE the device drain, where the minimum settles at exactly TARGET;
-     * post-drain it is TARGET - one drain interval, still above half.) The
-     * earlier `|| r.dry <= 1` escape let this pass without that being true. */
+    /* Strictly: the first pump with a sink fills to the target, so from the
+     * second pump on the depth the pump OPENS with is already above half the
+     * target. (The first pump is excluded - it is the cold start, see
+     * simulateScenario. Before the harness drained first, the minimum was
+     * sampled after the refill and read as TARGET; that was a property of the
+     * harness order, not of the pump.) The earlier `|| r.dry <= 1` escape let
+     * this pass without that being true. */
     CHECK(r.min_bytes > TARGET / 2);
     CHECK(r.max_bytes >= TARGET);
     CHECK(r.consumed > 0);
@@ -578,8 +730,8 @@ static void test_simulation_absorbs_device_drift(void)
         CHECK(r.min_bytes > TARGET / 2);
         CHECK(r.max_bytes < TARGET + MAX_FRAME * BYTES_PER_SAMPLE);
         /* and the render rate followed the device, by construction */
-        CHECK(r.rendered > r.consumed - (long long) MAX_FRAME);
-        CHECK(r.rendered < r.consumed + (long long) MAX_FRAME);
+        CHECK(simUnaccounted(&r, TARGET) > -(long long) MAX_FRAME);
+        CHECK(simUnaccounted(&r, TARGET) < (long long) MAX_FRAME);
     }
 }
 
@@ -591,9 +743,19 @@ static void test_simulation_at_low_frame_rate(void)
     simulate(20, 0, 30, &r, TARGET, CAP);
 
     CHECK(r.dry == 0);
-    CHECK(r.min_bytes > TARGET / 2);
-    CHECK(r.rendered > r.consumed - (long long) MAX_FRAME);
-    CHECK(r.rendered < r.consumed + (long long) MAX_FRAME);
+    /* What the pump OPENS with here is the interval floor's cushion, not the
+     * target: at 50 ms the floor is 5468 B and the device has just drained
+     * 4410 B of it, so ~1058 B - one device period - is left when the pump
+     * arrives. The old `min_bytes > TARGET / 2` was true only because the
+     * harness sampled the queue after refilling it first; in the pump's order
+     * it would fail on a perfectly healthy run. The invariant that survives the
+     * order change is stated instead: the cushion is at least one device period,
+     * less at most one aligned unit of refill rounding. */
+    CHECK(r.min_bytes >= DEV_PERIOD_MS * RATE * BYTES_PER_SAMPLE / 1000u
+                        - ALIGN * BYTES_PER_SAMPLE);
+    CHECK(r.max_bytes < r.min_bytes + portAudioPaceMinTarget(50u, &cfg));
+    CHECK(simUnaccounted(&r, TARGET) > -(long long) MAX_FRAME);
+    CHECK(simUnaccounted(&r, TARGET) < (long long) MAX_FRAME);
 }
 
 static void test_simulation_at_single_digit_frame_rate(void)
@@ -619,8 +781,8 @@ static void test_simulation_at_single_digit_frame_rate(void)
         /* one interval + one device period of audio, within a frame's slack */
         need = (unsigned long long) (1000u / fps + DEV_PERIOD_MS) * RATE * BYTES_PER_SAMPLE / 1000u;
         CHECK(r.max_bytes >= need - MAX_FRAME * BYTES_PER_SAMPLE);
-        CHECK(r.rendered > r.consumed - (long long) MAX_FRAME);
-        CHECK(r.rendered < r.consumed + (long long) MAX_FRAME);
+        CHECK(simUnaccounted(&r, TARGET) > -(long long) MAX_FRAME);
+        CHECK(simUnaccounted(&r, TARGET) < (long long) MAX_FRAME);
     }
 }
 
@@ -654,8 +816,8 @@ static void test_simulation_at_high_frame_rate(void)
 
     CHECK(r.dry == 0);
     CHECK(r.min_bytes > TARGET / 2);
-    CHECK(r.rendered > r.consumed - (long long) MAX_FRAME);
-    CHECK(r.rendered < r.consumed + (long long) MAX_FRAME);
+    CHECK(simUnaccounted(&r, TARGET) > -(long long) MAX_FRAME);
+    CHECK(simUnaccounted(&r, TARGET) < (long long) MAX_FRAME);
 }
 
 static void test_simulation_survives_a_stall_between_pumps(void)
@@ -688,145 +850,18 @@ static void test_simulation_survives_a_stall_between_pumps(void)
     CHECK(queued <= TARGET + ALIGN * BYTES_PER_SAMPLE);
 }
 
-/* ---- a jittered pump interval, in either order -------------------------- */
+/* ---- the ratchet under a cadence that varies ---------------------------- */
 
 /*
- * The simulations above all pump at a CONSTANT interval, which is why none of
- * them ever caught this: the pump measures the interval that just elapsed and
- * sizes the queue to it, so a perfectly even pump interval can never starve - it
- * refills for exactly the interval it just lost. A real session's intervals
- * vary, and the gap is only visible when one interval is longer than the one
- * before it.
+ * These are the cases the constant-interval simulations above could never be:
+ * the interval changes, so a pump meets a queue that was sized for the interval
+ * before it. Both switches now live on SimScenario (use_effective, refill_first)
+ * and drive the same core as everything above - one physics in this file, and it
+ * is the pump's.
  *
- * This drives `base_ms` pumps with every `spike_every`-th taking `spike_ms`,
- * against the same device model as simulate(). Two independent switches, so each
- * can be varied with the other held fixed:
- *
- *   use_effective  0  max(floor, ratcheted)              - the rule before df881c9
- *                  1  portAudioPaceEffectiveTarget(...)  - floor + learned
- *   refill_first   0  drain, then measure and refill     - THE PUMP'S REAL ORDER
- *                  1  measure, refill, then drain        - what simulate() does
- *
- * The ratchet itself is stepped identically in both arms, so the only variable
- * is the one under test. `refill_first = 1` exists to reproduce the harness's
- * own blind spot (see test_harness_order_decides_whether_a_starve_is_visible);
- * every case about the POLICY uses 0, because that is what the game does.
+ * The ratchet is stepped once per pump in both orders, at the same point, so a
+ * comparison measures the rule or the order and never the stepping as well.
  */
-
-/* Refill toward `target_eff` one aligned frame at a time, bounded by `cap_eff`.
- * Returns the samples queued. */
-static unsigned jitterRefill(PortAudioPaceClock *c, unsigned *queued,
-                             unsigned pump_ms, unsigned target_eff, unsigned cap_eff)
-{
-    unsigned rendered = 0;
-
-    while (1) {
-        unsigned n = portAudioPaceFrame(c, pump_ms, *queued, target_eff, 1, &cfg);
-        unsigned bytes;
-
-        if (n == 0) {
-            break;
-        }
-        bytes = n * BYTES_PER_SAMPLE;
-        if (*queued + bytes > cap_eff) {
-            break;
-        }
-        *queued += bytes;
-        rendered += n;
-    }
-    return rendered;
-}
-
-/* The device plays for `pump_ms`, stopping when the queue runs out - it played
- * silence from then on, which is what the caller counts as dry. */
-static void jitterDrain(unsigned *queued, unsigned pump_ms,
-                        long long *consumed_acc, long long *consumed)
-{
-    *consumed_acc += (long long) pump_ms * (long long) RATE;
-    while (*consumed_acc >= 1000) {
-        unsigned long long take = (unsigned long long) (*consumed_acc / 1000);
-
-        *consumed_acc -= (long long) take * 1000;
-        if (take > *queued / BYTES_PER_SAMPLE) {
-            take = *queued / BYTES_PER_SAMPLE; /* cannot play what is not queued */
-        }
-        *queued -= (unsigned) (take * BYTES_PER_SAMPLE);
-        *consumed += (long long) take;
-    }
-}
-
-static void simulate_jitter(unsigned base_ms, unsigned spike_every, unsigned spike_ms,
-                            unsigned seconds, int use_effective, int refill_first,
-                            SimResult *out)
-{
-    PortAudioPaceClock c;
-    PortAudioPaceTarget t = {0, 0};
-    long long consumed_acc = 0;
-    unsigned queued = TARGET;
-    unsigned pumps = (seconds * 1000u) / base_ms;
-    unsigned i;
-    int primed = 0;
-
-    portAudioPaceClockReset(&c);
-    out->min_bytes = 0xFFFFFFFFu;
-    out->max_bytes = 0;
-    out->dry = 0;
-    out->rendered = 0;
-    out->consumed = 0;
-
-    for (i = 0; i < pumps; i++) {
-        unsigned pump_ms = (((i + 1) % spike_every) == 0) ? spike_ms : base_ms;
-        unsigned floor_bytes = portAudioPaceMinTarget(pump_ms, &cfg);
-        unsigned target_eff;
-        unsigned cap_eff;
-        unsigned opened;
-        unsigned ran_dry;
-
-        if (use_effective) {
-            target_eff = portAudioPaceEffectiveTarget(floor_bytes, t.target, &cfg);
-        } else {
-            target_eff = (floor_bytes > t.target) ? floor_bytes : t.target;
-        }
-        cap_eff = portAudioPaceCap(target_eff, &cfg);
-
-        if (refill_first) {
-            /* simulate()'s shape: measure the depth, top it up, and only then
-             * let the device play. The queue is never empty on arrival. */
-            opened = queued;
-            out->rendered += jitterRefill(&c, &queued, pump_ms, target_eff, cap_eff);
-        } else {
-            /* the pump's real shape: the interval has already elapsed and the
-             * device has already played, so this is the depth the pump sees. */
-            jitterDrain(&queued, pump_ms, &consumed_acc, &out->consumed);
-            opened = queued;
-        }
-
-        ran_dry = (primed && opened == 0) ? 1u : 0u;
-        if (ran_dry) {
-            out->dry++;
-        }
-        /* the same ratchet advance in both arms, so the comparison is honest */
-        t.target = portAudioPaceTargetStep(&t, (int) ran_dry, 0, &cfg);
-
-        if (refill_first) {
-            jitterDrain(&queued, pump_ms, &consumed_acc, &out->consumed);
-        } else {
-            out->rendered += jitterRefill(&c, &queued, pump_ms, target_eff, cap_eff);
-        }
-
-        if (!primed && queued > 0) {
-            primed = 1;
-        }
-        if (primed) {
-            if (queued < out->min_bytes) {
-                out->min_bytes = queued;
-            }
-            if (queued > out->max_bytes) {
-                out->max_bytes = queued;
-            }
-        }
-    }
-}
 
 /* The learned headroom must survive the interval floor.
  *
@@ -862,26 +897,86 @@ static void test_effective_target_adds_the_ratchet_on_top(void)
  * starving it. */
 static void test_jitter_at_low_frame_rate(void)
 {
-    SimResult legacy, fixed;
+    SimScenario legacy = {0};
+    SimScenario fixed = {0};
+    SimResult lr, fr;
+    const unsigned pumps = (120u * 1000u) / 870u; /* 137: 120 s of 870 ms pumps */
 
     /* 870 ms pumps, every fifth 940 ms: a 70 ms overrun, which is ordinary
      * frame-to-frame variance at this rate and well under the 116 ms the
      * ratchet is allowed to learn. The game's order, both arms. */
-    simulate_jitter(870u, 5u, 940u, 120u, 0, 0, &legacy);
-    simulate_jitter(870u, 5u, 940u, 120u, 1, 0, &fixed);
+    legacy.base_ms = 870u;
+    legacy.spike_every = 5u;
+    legacy.spike_ms = 940u;
+    legacy.seconds = 120u;
+    legacy.start_bytes = TARGET;
+    legacy.use_effective = 0;
+    fixed = legacy;
+    fixed.use_effective = 1;
 
-    /* The defect: the ratchet is masked by the floor, so every spike starves. */
-    CHECK(legacy.dry >= 20);
+    simulateScenario(&legacy, &lr);
+    simulateScenario(&fixed, &fr);
+
+    /* The defect: the ratchet is masked by the floor, so EVERY spike starves -
+     * exactly one dry event per spike, which is why the count is the pump count
+     * over the spike period rather than a loose lower bound. */
+    CHECK(lr.dry == pumps / 5u);
 
     /* The fix: the first spikes teach it, then the headroom covers them. */
-    CHECK(fixed.dry > 0);        /* the first spike is still a surprise */
-    CHECK(fixed.dry < legacy.dry);
-    CHECK(fixed.dry <= 8);
+    CHECK(fr.dry > 0);        /* the first spike is still a surprise */
+    CHECK(fr.dry < lr.dry);
+    CHECK(fr.dry <= 8);
+
+    /* Printed, not just asserted: the contrast IS the evidence, and a session
+     * that cites these counts must be able to reproduce them from this binary.
+     * The pump count is printed too, because 120 s of 870 ms pumps is 137 pumps
+     * and not the 120 the older write-ups assumed. */
+    printf("audio_pace: 1 fps, +70 ms every 5th pump, 120 s (%u pumps): "
+           "max(ratcheted,floor) dry=%u, floor+learned dry=%u\n",
+           pumps, lr.dry, fr.dry);
 
     /* And it is bounded: the queue does not grow without limit. */
-    CHECK(fixed.max_bytes <= portAudioPaceEffectiveTarget(
-                                 portAudioPaceMinTarget(940u, &cfg), TARGET_MAX, &cfg)
-                             + MAX_FRAME * BYTES_PER_SAMPLE);
+    CHECK(fr.max_bytes <= portAudioPaceEffectiveTarget(
+                             portAudioPaceMinTarget(940u, &cfg), TARGET_MAX, &cfg)
+                         + MAX_FRAME * BYTES_PER_SAMPLE);
+}
+
+/* The ordinary case: 60 fps, with the interval redrawn by +/-10% every pump.
+ *
+ * This is the cadence an ordinary session has, and it must stay dry. The case
+ * exists to prove the faithful harness does not invent starvation at ordinary
+ * frame rates - the 40 ms target spans two and a bit pump intervals here, so
+ * the variance to absorb is a fraction of the cushion - and to keep the
+ * generator's bound honest: "bounded jitter" must not be an assumption about a
+ * hash. */
+static void test_jitter_at_60fps_is_absorbed(void)
+{
+    SimScenario s = {0};
+    SimResult r;
+    unsigned i;
+
+    for (i = 0; i < 1000u; i++) {
+        unsigned v = jitteredMs(60u, 10u, i);
+
+        CHECK(v >= 54u && v <= 66u); /* 60 ms +/- 10%, whole ms */
+    }
+
+    s.fps = 60u;
+    s.jitter_pct = 10u;
+    s.seconds = 60u;
+    s.start_bytes = TARGET;
+    s.cap = CAP;
+    s.use_effective = 1;
+    simulateScenario(&s, &r);
+
+    CHECK(r.dry == 0);
+    /* And the case has teeth: the level really moved, so dry == 0 is a property
+     * of the policy and not of a queue nothing touched. */
+    CHECK(r.min_bytes < TARGET);
+    CHECK(r.max_bytes > TARGET);
+
+    printf("audio_pace: 60 fps, +/-10%% jitter, 60 s: dry=%u, queue %u..%u B (target %u)\n",
+           r.dry, r.min_bytes, r.max_bytes, TARGET);
 }
 
 /* The harness's ORDER is itself a claim, and for three passes it was the wrong
@@ -902,18 +997,36 @@ static void test_jitter_at_low_frame_rate(void)
  * refill-first as an optimisation. */
 static void test_harness_order_decides_whether_a_starve_is_visible(void)
 {
-    SimResult refillFirst, gameOrder;
+    SimScenario refillFirst = {0};
+    SimScenario gameOrder = {0};
+    SimResult rf, go;
 
-    simulate_jitter(870u, 5u, 940u, 120u, 0, 1, &refillFirst); /* simulate()'s shape */
-    simulate_jitter(870u, 5u, 940u, 120u, 0, 0, &gameOrder);   /* the game's shape */
+    /* 1 fps, every fifth pump 70 ms longer, and the pre-df881c9 rule in BOTH
+     * arms: that rule loses on every spike by construction, so the only
+     * variable left between the two runs is the order. */
+    refillFirst.base_ms = 870u;
+    refillFirst.spike_every = 5u;
+    refillFirst.spike_ms = 940u;
+    refillFirst.seconds = 120u;
+    refillFirst.start_bytes = TARGET;
+    refillFirst.use_effective = 0;
+    refillFirst.refill_first = 1;   /* the harness's old shape */
+    gameOrder = refillFirst;
+    gameOrder.refill_first = 0;     /* the pump's shape */
+
+    simulateScenario(&refillFirst, &rf);
+    simulateScenario(&gameOrder, &go);
 
     /* Topped up before it can empty: the loss is invisible. */
-    CHECK(refillFirst.dry == 0);
+    CHECK(rf.dry == 0);
     /* The real order sees it, and the pre-fix rule loses on every spike. */
-    CHECK(gameOrder.dry >= 20);
+    CHECK(go.dry >= 20);
 
     /* Same policy, same jitter, same length - the order alone is the difference. */
-    CHECK(gameOrder.dry > refillFirst.dry);
+    CHECK(go.dry > rf.dry);
+
+    printf("audio_pace: same rule and jitter, order only: refill-first dry=%u, "
+           "game-order dry=%u\n", rf.dry, go.dry);
 }
 
 int main(void)
@@ -944,6 +1057,7 @@ int main(void)
     test_simulation_survives_a_stall_between_pumps();
     test_effective_target_adds_the_ratchet_on_top();
     test_jitter_at_low_frame_rate();
+    test_jitter_at_60fps_is_absorbed();
     test_harness_order_decides_whether_a_starve_is_visible();
 
     printf("audio_pace: all checks passed\n");

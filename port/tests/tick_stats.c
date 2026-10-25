@@ -81,6 +81,47 @@ static void rounding(void)
     CHECK(portStatsRatePerSec(61, 1017, 10) == 600);
 }
 
+/* F5: the healthy band is a band, not a number. This pins where it comes from,
+ * so the claim stops resting on four readings from one session.
+ *
+ * The rate is whole fields over a window of whole milliseconds. A healthy 60 Hz
+ * sim credits 60 fields per second, so over a window of dt ms the nearest whole
+ * count is round(dt*60/1000) - and 600 (60.0) is reached only where that product
+ * lands on an integer. Sweeping every window length the stat pass can actually
+ * close on (it publishes at >= 500 ms) gives the band below: arithmetic, with no
+ * defect involved. */
+static void healthy_window_band(void)
+{
+    uint32_t dt;
+    uint32_t lo = 0xFFFFFFFFu, hi = 0;
+
+    for (dt = 500; dt <= 1000; dt++) {
+        uint32_t fields = (dt * 60u + 500u) / 1000u; /* nearest whole field */
+        uint32_t v = portStatsRatePerSec(fields, dt, 10);
+
+        CHECK(v >= 591u && v <= 610u);
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+    }
+    /* Both ends are reached inside the sweep, so the band is arithmetic rather
+     * than a tolerance chosen to fit: 59.1 is 30 fields over 508 ms, and 61.0 is
+     * 32 over 525. */
+    CHECK(lo == 591u);
+    CHECK(hi == 610u);
+
+    /* One field either side of a boundary - a window that straddles a field -
+     * stays inside [58.0, 62.0], so a reading in the manual's measured 59.3-62.9
+     * band still needs no fault to explain it. That band's top is two fields at
+     * a 500 ms window, which is the ordinary case when the window starts and the
+     * counters are sampled at different points. */
+    for (dt = 500; dt <= 1000; dt++) {
+        uint32_t base = (dt * 60u) / 1000u;
+
+        CHECK(portStatsRatePerSec(base, dt, 10) >= 580u);
+        CHECK(portStatsRatePerSec(base + 1u, dt, 10) <= 620u);
+    }
+}
+
 /* D4: lvlStageLoad zeroes g_GlobalTickCount. The baseline must follow the reset
  * so the window reads 0 instead of -2x the pre-load count. */
 static void stage_load_reset(void)
@@ -198,6 +239,7 @@ int main(void)
     no_ticks();
     zero_window();
     rounding();
+    healthy_window_band();
     stage_load_reset();
     negative_never_published();
     stall_cap();
