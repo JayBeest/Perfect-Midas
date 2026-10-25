@@ -10,7 +10,13 @@
  *           (render thread waiting for the game's next frame)
  *   sim     longest stretch of game code between two top-level pumps (tick +
  *           display-list build + any loading), pacer = time the pump slept
- *           on its schedule, ticks = g_GlobalTickCount advance
+ *           on its schedule, ticks = g_GlobalTickCount advance, fld = the
+ *           fields credited to the sim (g_PortFieldsTicked), and under
+ *           tickhz=hw `model held N` = the field hold the pacer last priced
+ *           (g_PortHwFieldsHeld; read, never recomputed - see below). fld far
+ *           below N is the sim losing the difference: the credit path clamps at
+ *           GE_TICKMAXSTEP (8 fields) while the hw model may price a frame at
+ *           up to 30. That comparison is the reason the audit is here.
  *   events  since the previous frame, count (total ms) of each timed kind:
  *           rooms (bgLoadRoomModelData), models (load_object_fill_header:
  *           file + ROM conversion + textures), tex (texLoad inflate),
@@ -109,8 +115,10 @@ void portHitchFrame(unsigned long long interval_us, unsigned long long run_us,
     extern int g_StageNum;            /* s32, boss.c: the running stage */
     extern int portTickHz(void);      /* s32 */
     extern int portRenderAsyncActive(void);
+    extern unsigned int g_PortFieldsTicked; /* frametiming.c: fields credited to the sim */
     static unsigned long long s_LastSleep;
     static int s_LastTick, s_Primed;
+    static unsigned int s_LastFields;
     static unsigned long long s_SecondUs;
     static int s_Lines, s_Dropped;
     const int threshold = portHitchThresholdUs();
@@ -130,8 +138,43 @@ void portHitchFrame(unsigned long long interval_us, unsigned long long run_us,
     /* In hardware-paced mode (tickhz=hw) the pacer deliberately sleeps to match
      * the N64's frame time, so only time spent beyond that counts as a hitch. */
     extern int portTickHwPace(void);   /* frametiming.c */
+    /* The field hold the pacer priced, READ ONLY. This used to call
+     * portHwPaceFields(), which is wrong here: this function runs at present time
+     * (the render thread when render_thread=1) and that call mutates the model and
+     * consumes the pending load charge. */
+    extern int g_PortHwFieldsHeld;     /* frametiming.c, written by the game thread */
     const unsigned long long slept = sleep - s_LastSleep;
     const unsigned long long judged = (portTickHwPace() && interval_us > slept) ? interval_us - slept : interval_us;
+    const unsigned int dfld = __atomic_load_n(&g_PortFieldsTicked, __ATOMIC_RELAXED) - s_LastFields;
+    char hw[48];
+
+    /* The audit: under hw pacing the model asks for `model held N` fields and
+     * the sim is credited `fld`. Both cover the same span, the frame that just
+     * presented: this function is called once per present, from
+     * gfx_sdl_swap_buffers_begin, and s_LastFields is re-read at the end of
+     * every call - so `fld` is the fields credited since the previous FRAME,
+     * which is the frame `model held` was priced for. (That holds even when no
+     * line prints: the statics advance either way.) `fld` short of N is
+     * simulated time thrown away (D5 in docs/port/tick-and-field-accounting.md),
+     * which is invisible at 60fps because every frame is one field there. */
+    hw[0] = '\0';
+    if (portTickHwPace())
+    {
+        /* Relaxed load: this runs on the render thread when render_thread=1 and
+         * the writer is the game thread. It is loaded atomically to match the
+         * store, since a torn int would print a nonsense field count rather
+         * than a merely stale one.
+         *
+         * 0 means "no hold priced yet" (the model has not seen a frame), NOT
+         * "the model asked for zero fields" - a frame is always at least one
+         * field - so print nothing rather than a 0 a reader would misread. */
+        const int held = __atomic_load_n(&g_PortHwFieldsHeld, __ATOMIC_RELAXED);
+
+        if (held > 0)
+        {
+            snprintf(hw, sizeof hw, " model held %d", held);
+        }
+    }
 
     if (threshold > 0 && judged >= (unsigned long long) threshold && s_Primed)
     {
@@ -152,7 +195,7 @@ void portHitchFrame(unsigned long long interval_us, unsigned long long run_us,
                 }
             }
             printf("ge: hitch: %llu.%llu ms frame (stage %d, tick%d, render thread %s) | render: gl %llu.%llu swap %llu.%llu lim %llu.%llu idle %llu.%llu"
-                   " | sim: longest %llu.%llu ms, pacer %llu.%llu ms, %d tick(s)%s | draws %u |%s%s\n",
+                   " | sim: longest %llu.%llu ms, pacer %llu.%llu ms, %d tick(s) %u fld%s%s | draws %u |%s%s\n",
                    interval_us / 1000, (interval_us % 1000) / 100, g_StageNum, portTickHz(),
                    portRenderAsyncActive() ? "on" : "off",
                    gl / 1000, (gl % 1000) / 100, swap_us / 1000, (swap_us % 1000) / 100,
@@ -160,6 +203,8 @@ void portHitchFrame(unsigned long long interval_us, unsigned long long run_us,
                    simmax / 1000, (simmax % 1000) / 100,
                    (sleep - s_LastSleep) / 1000, ((sleep - s_LastSleep) % 1000) / 100,
                    tick >= s_LastTick ? tick - s_LastTick : tick,
+                   dfld,
+                   hw,
                    tick >= s_LastTick ? "" : " (clock reset)", draws, len ? ev : " no timed events",
                    s_Dropped ? " (more hitches were dropped by the rate limit)" : "");
             fflush(stdout);
@@ -179,6 +224,7 @@ void portHitchFrame(unsigned long long interval_us, unsigned long long run_us,
     }
     s_LastSleep = sleep;
     s_LastTick = tick;
+    s_LastFields = __atomic_load_n(&g_PortFieldsTicked, __ATOMIC_RELAXED);
     s_Primed = 1;
 }
 #endif
