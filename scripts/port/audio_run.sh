@@ -24,6 +24,7 @@
 #   -w REGEX     stop early once this regex matches the run log that many times
 #   -n COUNT     how many matches -w needs (default 5)
 #   -e K=V,..    extra environment for the game
+#   -g "ARGS"    extra command-line arguments for the game (e.g. -n64_aa)
 #   -a 0         do not enable cl_audio_log
 #   -k           keep the ini as the run left it (default: restore it)
 #
@@ -44,16 +45,18 @@ stage=dam
 want_re=""
 want_n=5
 extra_env=""
+game_args=""
 audio_log=1
 keep_ini=0
 
-while getopts "t:s:w:n:e:a:k" opt; do
+while getopts "t:s:w:n:e:g:a:k" opt; do
     case "$opt" in
         t) seconds=$OPTARG ;;
         s) stage=$OPTARG ;;
         w) want_re=$OPTARG ;;
         n) want_n=$OPTARG ;;
         e) extra_env=$OPTARG ;;
+        g) game_args=$OPTARG ;;
         a) audio_log=$OPTARG ;;
         k) keep_ini=1 ;;
         *) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
@@ -87,6 +90,7 @@ concmd=""
 
 echo "== run: ${seconds}s ${stage:-(menus)}"
 [ -n "$extra_env"    ] && echo "   env:  $extra_env"
+[ -n "$game_args"    ] && echo "   args: $game_args"
 [ -n "$concmd"       ] && echo "   cmd:  $concmd"
 [ -n "$want_re"      ] && echo "   stop: $want_n x /$want_re/"
 echo "   ini:  $INI_MD5"
@@ -103,7 +107,8 @@ if [ -n "$extra_env" ]; then
 fi
 
 : > "$LOG"
-env "${env_args[@]}" "$GAME" > "$LOG" 2>&1 &
+# shellcheck disable=SC2086  # game_args is a deliberate word-split argument list
+env "${env_args[@]}" "$GAME" $game_args > "$LOG" 2>&1 &
 pid=$!
 start=$(date +%s)
 found=0

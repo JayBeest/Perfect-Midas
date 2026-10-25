@@ -280,3 +280,6 @@ docs/devnotes/
 # the docs live in the private repo
 /docs/*
 !/docs/macos.md
+
+# boot_flag_test.sh capture folders (dated; they hold 2 MB BMPs per shot)
+/captures/

@@ -135,9 +135,10 @@ observed.)
 
 ## 3. Command-line arguments
 
-Only two flags exist, plus drag-and-drop. `src/` and `port/` were searched for
-`argv` uses: `main.c` takes `argv[0]` for the root directory and hands the rest to
-`romdataInit`, and nothing else reads the argument vector.
+Two kinds: the ROM/language flags the port has always had, and three diagnostic
+boot flags added for capture runs. All are mix-and-match.
+
+### 3.1 ROM and language
 
 | Argument | Meaning |
 | --- | --- |
@@ -151,8 +152,47 @@ Only two flags exist, plus drag-and-drop. `src/` and `port/` were searched for
 ./ProjectMidas --rom-file ~/carts/goldeneye.u.z64 --lang jp
 ```
 
-There is **no** `--help` and no `--version`. An unrecognised flag is not an error —
-it is ignored, and the ROM falls through to the next source in §4.
+### 3.2 Diagnostic boot flags
+
+Set up a capture or investigation run before the first frame is drawn, so nothing
+has to be typed into the console.
+
+| Flag | Effect |
+| --- | --- |
+| `-n64_aa` | Start in **Classic Mode** — the same thing the `classic_toggle` key does (Tab by default). That is 240p, `maxfps=-1` (hardware pacing), 4× MSAA, the 4:3 pillars and the classic filter, all of it, not just the AA bit. |
+| `-audio_pump` | Draw the `cl_audio_pump` block from the first frame, in menus and cutscenes too. |
+| `-audio_log` | Write `Data/Logs/audio_pump.log`, one line a second. |
+
+```bash
+./ProjectMidas -n64_aa -audio_pump -audio_log      # everything at once
+./ProjectMidas -audio_pump                        # just the block
+./ProjectMidas -n64_aa -audio_log                 # classic mode, log to file
+```
+
+**Spelling.** One or two dashes, either case, and `-` or `_` as the separator: `-n64_aa`, `--n64_aa`, `-N64-AA` and `-n64-aa` are all the same flag. There is no
+`=value` form — `-n64_aa=1` is ignored like any unknown argument.
+
+**A leading dash is required.** A bare `audio_pump` is *not* a flag, because a
+bare first argument is the drag-and-drop ROM path and must not be eaten.
+
+**`-n64_aa` writes `midas.ini`**, exactly as pressing Tab does, so the mode
+persists after you quit. Add `GE_NOINISAVE=1` for a run that must leave your file
+alone; the parts still apply for that session. It is idempotent — launching twice
+with the flag does not overwrite the saved pre-Classic-Mode values a second time.
+
+Unknown flags are ignored rather than rejected, and any argument starting with `-`
+that matches nothing is named in the log (`ignoring argument '-foo'`). There is
+**no** `--help` and no `--version`.
+
+### 3.3 Why the pump block needed a flag at all
+
+`cl_audio_pump` and `cl_audio_log` are console settings, not `midas.ini` keys, and
+until these flags existed the only way to set them without a keyboard was
+`GE_CONCMD="cl_audio_pump 1"`, which runs at the **first rendered frame**. The
+flags do the same thing earlier, are named after the console verbs so the two
+cannot drift, and are covered by `port/tests/boot_flags.c` under `ctest` — a flag
+that is silently ignored looks exactly like one that worked, which is a failure
+this project has already paid for once (`GE_TICKHZ=hw`, §2.4).
 
 ---
 
@@ -189,7 +229,7 @@ They are **not** `midas.ini` keys, and none of them is saved.
 | `GE_CONSOLE=1` | Open the console at startup. |
 | `GE_CONCMD="<line>[;<line>…]"` | Run console lines once at the first rendered frame. |
 | `GE_NOINPUT=1` | Ignore input devices. |
-| `GE_WINDOW=<WxH>` | Override the window size, and make the run write nothing to `midas.ini` — the capture/harness switch. `GE_WINDOW=1280x720` for a specific size; any value at all suppresses ini writes. |
+| `GE_WINDOW=<WxH>` | Override the window **size**, and suppress every `midas.ini` write for the run. `GE_WINDOW=1280x720` for a specific size; any value at all suppresses writes. |
 
 `GE_STAGE=dam GE_FRAMES=900` is a ~4 minute run on a software renderer, because
 Dam frames cost ~890 ms there. Bounding by **time** and stopping on a log pattern
@@ -244,6 +284,24 @@ Only meaningful with hw pacing on (§2). Documented at length in
 
 ---
 
+### 5.7 Testing the boot flags
+
+`scripts/port/boot_flag_test.sh` runs seven short live cases — two a human
+watches (windowed, then fullscreen) and five that assert — and writes the
+captures into a dated folder under `captures/` with a `README.txt` recording the
+renderer that produced them, then opens that folder:
+
+```bash
+scripts/port/boot_flag_test.sh              # all seven, 8 s each
+scripts/port/boot_flag_test.sh -s eyeball_windowed
+scripts/port/boot_flag_test.sh -t 12 -v     # longer, ordinary cases windowed too
+```
+
+It restores `midas.ini` after every case and refuses to claim that a pixel case
+passed — that is the observer's call, which is why the folder opens.
+
+---
+
 ## 6. The in-game console
 
 Press `` ` ``. Useful for starting or checking a mode without relaunching:
@@ -294,6 +352,31 @@ grep -rhoa '"GE_[A-Z0-9_]*"' port/src src port/fast3d | tr -d '"' | LC_ALL=C sor
 Most knobs are read **once at startup**, which is why the console command only
 reports them and cannot toggle them: set them in the environment before launching.
 
+### 7.1 `GE_WINDOW` does not change the display mode
+
+Despite the name it sets the **window size only**. Fullscreen/windowed still comes
+from `midas.ini` (`fullscreen=` and `window_display=`), so a capture run on a
+multi-monitor machine can open fullscreen on a display nobody is looking at. To
+watch one, set `fullscreen=windowed` and `window_display=0` in the file (restore
+it afterwards), or use `scripts/port/boot_flag_test.sh`, which does that per case
+and puts the file back byte for byte.
+
+### 7.2 A sandboxed shell gets the software renderer — and a black window
+
+Launched from a normal terminal or by double-click, the game gets a GPU context
+(`GL: renderer: Apple M5` on this machine). Launched from a sandboxed or non-GUI
+shell it falls back to `GL: renderer: Apple Software Renderer`. That context
+draws correctly — the in-game `GE_SHOT` captures look right — but the window may
+never composite, so the screen stays black while audio plays. This is not a game
+defect and not a rendering defect; it is the process having no GPU.
+
+If a run renders in captures but shows nothing on screen, **read the renderer line
+first**:
+
+```bash
+./ProjectMidas 2>&1 | grep 'GL: renderer'
+```
+
 ---
 
 ## 8. What a run writes
@@ -329,3 +412,12 @@ suite.
 hw pacing from the first rendered frame is derived from the code path, not
 observed. If you want it verified, run it with `GE_NOINISAVE=1` and check the log
 line for the resolved tick rate.
+
+**Added later, and executed:** the boot flags in §3.2, on 2026-10-25. Seven
+8-second live runs through `scripts/port/boot_flag_test.sh` — five asserting,
+two eyes-on — confirmed `-audio_pump` puts the block on the legal screen and
+logo screens (captures differ from `baseline` exactly by the block), and that
+`-n64_aa` logs `Classic Mode on (applied)` followed by `low_res=240 maxfps=-1`.
+The `GE_WINDOW` correction in §7.1 and the software-renderer note in §7.2 come
+from the same session: the first was wrong when this file was written, and the
+second cost a round of confusion before the renderer line explained it.
