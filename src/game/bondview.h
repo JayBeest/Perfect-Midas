@@ -2805,6 +2805,11 @@ Gfx * bondviewRenderDebugBondView(Gfx *arg0);
 s32 bond_pressed_reload_activate(void);
 Gfx* write_stan_tiles_in_yellow(Gfx *arg0);
 Gfx * maybe_mp_interface(Gfx *arg0);
+#ifndef TARGET_N64
+/* The cl_audio_pump block on its own (bondview2.c), so the front end can draw
+ * it too: see lv.c's LEVELID_TITLE branch. */
+Gfx * portDrawAudioPumpOverlay(Gfx *arg0);
+#endif
 Gfx * bondviewRemoved7F08BCB8(Gfx *arg0);
 bool camIsPosInScreen(coord3d *vec_scale, f32 norm_scale);
 bool camIsPosInScreenBox(coord3d *, f32, struct bbox2d *);

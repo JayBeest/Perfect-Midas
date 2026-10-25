@@ -12791,6 +12791,46 @@ static Gfx *portDrawAudioPumpStats(Gfx *gdl, s32 x, s32 y)
     return gdl;
 }
 
+/* The cl_audio_pump block on its own, at the corner the FPS strip uses. Split
+ * out of portDrawFpsCounter so the FRONT END can draw it: the menus never reach
+ * maybe_mp_interface, so a block that only existed there was invisible until a
+ * stage loaded - which is exactly when a reader least needs it, since the load
+ * is the event they are trying to watch. The FPS digits are deliberately not
+ * part of this: they stay in-level only, where they were. */
+Gfx *portDrawAudioPumpOverlay(Gfx *gdl)
+{
+    extern s32 portAudioPumpStatsShown(void);   /* audio_pc.c; weak 0 headless */
+    s32 ox;
+    s32 oy;
+
+    if (!portAudioPumpStatsShown())
+    {
+        return gdl;
+    }
+    /* Player 1's corner. In the menus getPlayerCount() is what the file select
+     * left behind, so a "split" there is a real split screen, not a menu. */
+    if (!(getPlayerCount() == 1 || get_cur_playernum() == 0))
+    {
+        return gdl;
+    }
+
+    ox = viGetViewLeft() + 2;
+    oy = viGetViewTop() + 2;
+
+    /* Solo full height keeps the top row while paused, since the view snaps 10
+     * lines down at the end of the pause-box ease. */
+    if (getPlayerCount() == 1 && portFullHeightActive())
+    {
+        oy = 2;
+    }
+
+    /* A menu constructor leaves its own scissor set, and the block is
+     * full-frame: claim the whole viewport before drawing it. */
+    gDPSetScissor(gdl++, G_SC_NON_INTERLACE, 0, 0, viGetX(), viGetY());
+
+    return portDrawAudioPumpStats(gdl, ox + 1, oy + 1);
+}
+
 static Gfx *portDrawFpsCounter(Gfx *gdl)
 {
     extern s32 portVideoShowFps(void);      /* video.c; weak 0 headless */
@@ -12840,10 +12880,7 @@ static Gfx *portDrawFpsCounter(Gfx *gdl)
     { /* console cl_audio_pump 1: the live pump block, in the corner the strip
        * uses. It owns that corner whenever it is on, so it starts where the
        * digits would have, not below them. */
-        if (portAudioPumpStatsShown() && corner_ok)
-        {
-            gdl = portDrawAudioPumpStats(gdl, ox + 1, oy + 1);
-        }
+        gdl = portDrawAudioPumpOverlay(gdl);
     }
     return gdl;
 }

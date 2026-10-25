@@ -1155,6 +1155,13 @@ Gfx* lvlRender(Gfx* DL)
         DL = viSetupCurrentPlayerView(DL);
         gDPSetScissor(DL++, G_SC_NON_INTERLACE, 0, 0, (s16)viGetX(), (s16)viGetY());
         DL = menu_jump_constructor_handler(DL);
+#ifndef TARGET_N64
+        /* The cl_audio_pump block, in the menus too. It used to be drawn only
+         * from maybe_mp_interface, which the front end never reaches, so
+         * `cl_audio_pump 1` showed nothing until a stage had loaded. Last in the
+         * frame, as in a level, so no menu panel can cover it. */
+        DL = portDrawAudioPumpOverlay(DL);
+#endif
     }
     else
     {
