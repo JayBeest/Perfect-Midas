@@ -182,6 +182,18 @@ __attribute__((weak)) s32 portVideoShowFps(void)
     return 0;
 }
 
+/** Weak defaults: no boot skipping and no direct stage without video.c, so a
+ *  headless build boots exactly as it always did. front.c calls both. */
+__attribute__((weak)) s32 videoBootSkipScreens(void)
+{
+    return 0;
+}
+
+__attribute__((weak)) const char *videoBootStage(void)
+{
+    return 0;
+}
+
 /** Weak defaults: no audio pump overlay headless; audio_pc.c overrides. The
  *  overlay draw lives in bondview2.c, so any headless target that links that
  *  file without audio_pc.c resolves here instead of failing to link. */

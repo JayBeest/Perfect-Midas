@@ -208,6 +208,22 @@ bf_mutate 's/portBootFlagIs\(argv\[i\], "classic"\) \|\| //' "classic: drop the 
 # itself as the old flag - the same defect as one that does nothing.
 bf_mutate 's/            out->classic_spelling = argv\[i\];\n//' "classic: never record the spelling" && \
     run_bf "the log cannot name the spelling typed" kill
+# A bare -skip means ALL the boot screens; a parser that defaulted to 0 there
+# silently skips nothing, which reads exactly like a flag that was ignored.
+bf_mutate 's/            if \(n >= 0\) \{\n                skip_n = n;/            if (1) {\n                skip_n = (n >= 0) ? n : 0;/' "skip: bare means none" && \
+    run_bf "a bare -skip skips nothing" kill
+# ...and a count must be a count: a word after -skip keeps the flag's bare
+# meaning instead of becoming the number of screens to skip.
+bf_mutate 's/        if \(a\[i\] < .0. \|\| a\[i\] > .9. \|\| i >= 3\) \{/        if (i >= 3) {/' "skip: any word is a count" && \
+    run_bf "-skip banana becomes a count" kill
+# 0 means off. A clamp that turned 0 into "all" would skip the boot sequence of
+# every -skip 0 launch.
+bf_mutate 's/    out->skip_screens = skip_all \? -1 : skip_n;/    out->skip_screens = (skip_all || skip_n == 0) ? -1 : skip_n;/' "skip: 0 means all" && \
+    run_bf "-skip 0 skips everything" kill
+# -stage with no value must not swallow a following flag: it would try to load a
+# mission called "-audio_pump" and lose the flag.
+bf_mutate "s/if \\(i \\+ 1 < argc && argv\\[i \\+ 1\\]\\[0\\] != '-'\\) \\{/if (i + 1 < argc) {/" "stage: swallow the next flag" && \
+    run_bf "-stage eats a neighbouring flag" kill
 cp "$BF" "$W/mut.c"
 run_bf "boot_flags" survive
 

@@ -45,9 +45,31 @@ int portBootFlagIs(const char *arg, const char *name)
     return (*arg == '\0' && *name == '\0') ? 1 : 0;
 }
 
+/* A whole decimal argument, or -1. Used for -skip's count: "3" is a count,
+ * "dam" and "-audio_pump" are not, and neither is anything too long to be
+ * one. Zero counts: -skip 0 is the same as not passing -skip. */
+static int argIsCount(const char *a)
+{
+    int n = 0;
+    int i;
+
+    if (a == NULL || a[0] == '\0') {
+        return -1;
+    }
+    for (i = 0; a[i] != '\0'; i++) {
+        if (a[i] < '0' || a[i] > '9' || i >= 3) {
+            return -1;   /* not a count (or absurd: the chain is 5 long) */
+        }
+        n = n * 10 + (a[i] - '0');
+    }
+    return n;
+}
+
 void portBootFlagsParse(int argc, char **argv, PortBootFlags *out)
 {
     int i;
+    int skip_all = 0;   /* a bare -skip: the whole chain */
+    int skip_n = 0;     /* -skip N: that many */
 
     if (out == NULL) {
         return;
@@ -55,6 +77,8 @@ void portBootFlagsParse(int argc, char **argv, PortBootFlags *out)
     out->classic = 0;
     out->audio_pump = 0;
     out->audio_log = 0;
+    out->skip_screens = 0;
+    out->stage = NULL;
     out->classic_spelling = NULL;
 
     if (argv == NULL) {
@@ -68,8 +92,31 @@ void portBootFlagsParse(int argc, char **argv, PortBootFlags *out)
             out->audio_pump = 1;
         } else if (portBootFlagIs(argv[i], "audio_log")) {
             out->audio_log = 1;
+        } else if (portBootFlagIs(argv[i], "skip")) {
+            /* The count is the NEXT argument when it is a number, which is how
+             * --rom-file and --lang already take their values. A non-number is
+             * left alone for whatever else wanted it, and the flag keeps its
+             * bare meaning: skip the whole boot chain. */
+            const int n = (i + 1 < argc) ? argIsCount(argv[i + 1]) : -1;
+
+            if (n >= 0) {
+                skip_n = n;
+                i++;             /* consumed */
+            } else {
+                skip_all = 1;
+            }
+        } else if (portBootFlagIs(argv[i], "stage")) {
+            /* The next argument, unless it is another flag: -stage with nothing
+             * after it is a mistake, not a request to load a stage called
+             * "-audio_pump". */
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                out->stage = argv[++i];
+            }
         }
     }
+    /* A bare -skip outranks a count: it is the more aggressive request, and
+     * "-skip 2 -skip" should not quietly skip two. */
+    out->skip_screens = skip_all ? -1 : skip_n;
 }
 
 /* 1 when `arg` matches `name` followed by '=' and anything: the `--flag=value`
@@ -100,9 +147,11 @@ int portBootFlagKnown(const char *arg)
 
     /* The three this file parses. -classic and -n64_aa are one flag, so both
      * spellings must be known: reporting the documented one as ignored is the
-     * defect portBootFlagKnown exists to prevent. */
+     * defect portBootFlagKnown exists to prevent. -skip and -stage take their
+     * value from the NEXT argument, so only the bare flag is a flag here. */
     if (portBootFlagIs(arg, "classic") || portBootFlagIs(arg, "n64_aa")
-        || portBootFlagIs(arg, "audio_pump") || portBootFlagIs(arg, "audio_log")) {
+        || portBootFlagIs(arg, "audio_pump") || portBootFlagIs(arg, "audio_log")
+        || portBootFlagIs(arg, "skip") || portBootFlagIs(arg, "stage")) {
         return 1;
     }
 

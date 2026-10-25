@@ -46,6 +46,15 @@ typedef struct {
                      * AA bit, which the preset sets through its own part */
     int audio_pump; /* -audio_pump: draw the cl_audio_pump block                */
     int audio_log;  /* -audio_log: write Data/Logs/audio_pump.log               */
+    /* -skip [N]: boot screens to skip. 0 = skip none; -1 = skip them all, i.e.
+     * land on the file select screen. A bare -skip means all, because that is
+     * the request a person makes; -skip N is for sitting on a specific screen
+     * to capture it. The chain is legal -> Nintendo -> Rare -> eye ->
+     * GoldenEye logo -> file select, so N=5 and "all" are the same landing. */
+    int skip_screens;
+    /* -stage <name>: start a mission directly, the same thing GE_STAGE does.
+     * Not owned - points into argv. NULL = no stage requested. */
+    const char *stage;
     /* The token that set `classic`, or NULL. For the log line only, and only so
      * it can name the spelling the caller actually typed: a launch that says
      * "-n64_aa -> Classic Mode on" when the command line said -classic would be
@@ -57,6 +66,11 @@ typedef struct {
 /*
  * Fill `out` from the argument vector. argv[0] (the program) is skipped.
  * Every field is written on every call, so `out` does not need clearing first.
+ *
+ * -skip and -stage take the NEXT argument as their value, like the existing
+ * --rom-file and --lang. A value that is not a number (-skip banana) is not a
+ * count: it is left alone, so the flag keeps its bare meaning and the value is
+ * free to be the ROM path. Nothing is silently consumed.
  */
 void portBootFlagsParse(int argc, char **argv, PortBootFlags *out);
 

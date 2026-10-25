@@ -18785,6 +18785,16 @@ static void portDirectLaunchTick(void)
     {
         const char *e = getenv("GE_STAGE");
         state = 2;
+        {   /* -stage <name> asks for exactly this; the env var is the older way
+             * and stays supported. The flag wins, like every other flag. */
+            extern const char *videoBootStage(void);   /* video.c; weak NULL */
+            const char *f = videoBootStage();
+
+            if (f != NULL)
+            {
+                e = f;
+            }
+        }
         if (e != NULL && e[0] != '\0')
         {
             if (e[0] >= '0' && e[0] <= '9')
@@ -18816,7 +18826,7 @@ static void portDirectLaunchTick(void)
             }
             if (state != 1)
             {
-                printf("ge: GE_STAGE=%s not recognized\n", e);
+                printf("ge: -stage/GE_STAGE=%s not recognized\n", e);
             }
         }
         return;
@@ -19245,6 +19255,77 @@ static void portDirectLaunchMpTick(void)
     state = 2;
 }
 
+/* -skip [N]: walk the boot screens without waiting them out.
+ *
+ * The chain is legal -> Nintendo -> Rareware -> eye -> GoldenEye logo -> file
+ * select, each held by its own timer in its own interface function. A bare
+ * -skip skips all five (land on the file select, which is what a capture run
+ * or an impatient launch wants); -skip N skips N of them, so -skip 2 sits on the
+ * Rareware logo with the Nintendo one already gone.
+ *
+ * It advances with frontChangeMenu(next, TRUE), the same call the real screens
+ * make on their timers and on a button press - including the eye intro, which
+ * already supports jumping to the logo mid-animation when someone mashes a
+ * button. Nothing here reaches into a screen's internals, so each screen's
+ * update_* still runs and still tears its own state down.
+ *
+ * The legal screen is the one screen a button press cannot skip on a first
+ * boot (interface_menu00_legalscreen ignores ANY_BUTTON until
+ * is_first_time_on_legal_screen clears), which is why this drives the
+ * transition directly rather than faking input.
+ *
+ * One skip per arrival: MENU_SWITCH_SCREENS is the fade between two screens and
+ * is left alone, so the budget is spent when a screen is actually reached, not
+ * per frame. */
+static void portBootSkipTick(void)
+{
+    extern s32 videoBootSkipScreens(void);   /* video.c; weak 0 headless */
+    static s32 budget = -2;                  /* -2 = not read yet */
+    static s32 spent;
+    static MENU skipped = MENU_INVALID;      /* the screen we already skipped */
+    MENU next = MENU_INVALID;
+
+    if (budget == -2)
+    {
+        budget = videoBootSkipScreens();
+        if (budget < 0)
+        {
+            budget = 5;   /* "all": the chain is five screens long */
+        }
+        if (budget > 0)
+        {
+            extern int printf(const char *, ...);
+
+            printf("ge: -skip: skipping %d boot screen%s\n",
+                   (int) budget, (budget == 1) ? "" : "s");
+        }
+    }
+    if (budget <= 0 || current_menu == MENU_SWITCH_SCREENS)
+    {
+        return;
+    }
+    if (current_menu == skipped)
+    {
+        return;   /* this screen already spent its skip */
+    }
+    switch (current_menu)
+    {
+        case MENU_LEGAL_SCREEN:    next = MENU_NINTENDO_LOGO;  break;
+        case MENU_NINTENDO_LOGO:   next = MENU_RAREWARE_LOGO;  break;
+        case MENU_RAREWARE_LOGO:   next = MENU_EYE_INTRO;      break;
+        case MENU_EYE_INTRO:       next = MENU_GOLDENEYE_LOGO; break;
+        case MENU_GOLDENEYE_LOGO:  next = MENU_FILE_SELECT;    break;
+        default:                   return;   /* past the chain: done skipping */
+    }
+    skipped = current_menu;
+    spent++;
+    if (spent >= budget)
+    {
+        budget = 0;   /* last one: the next screen is the one the caller wanted */
+    }
+    frontChangeMenu(next, TRUE);
+}
+
 /* GE_DEMO=<name|0-13>: play one of the 14 attract recordings immediately
  * (dam1 dam2 facility1 facility2 facility3 runway1 runway2 bunker1 bunker2
  * silo1 silo2 frigate1 frigate2 train - ramrom_table order, ramromreplay.c).
@@ -19349,6 +19430,7 @@ void menu_init(void)
     portDirectLaunchTick();
     portDirectLaunchMpTick();
     portDirectLaunchDemoTick();
+    portBootSkipTick();
     portMenuHarnessTick();
 #ifdef GE_VIDEO
     { /* A mouse aim press (right button by default) acts as B, the "back",

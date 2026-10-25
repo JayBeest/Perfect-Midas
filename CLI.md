@@ -159,16 +159,41 @@ has to be typed into the console.
 
 | Flag | Effect |
 | --- | --- |
+| `-skip [N]` | Skip the boot screens. Bare, all five — legal screen, Nintendo, Rare, eye, GoldenEye logo — so you land on **Select File**. `-skip N` skips N of them, which is how you sit on a particular logo to capture it. |
+| `-stage <name>` | Start a mission directly, skipping every menu. Same names and numeric ids as `GE_STAGE` (`dam`, `frigate`, `complex`, …); the flag wins over the variable. |
 | `-classic` | Start in **Classic Mode** — the same thing the `classic_toggle` key does (Tab by default). That is 240p, `maxfps=-1` (hardware pacing), 4× MSAA, the 4:3 pillars and the classic filter, all of it, not just the AA bit. `-n64_aa` is the **same flag**, kept as an alias. |
 | `-audio_pump` | Draw the `cl_audio_pump` block from the first frame, in menus and cutscenes too. |
 | `-audio_log` | Write `Data/Logs/audio_pump.log`, one line a second. |
 
 ```bash
+./ProjectMidas -skip -audio_pump                 # file select, block on, no waiting
+./ProjectMidas -skip 2 -audio_pump               # stop on the Rare logo
+./ProjectMidas -skip -stage dam                  # straight into Dam, no menus at all
 ./ProjectMidas -classic -audio_pump -audio_log    # everything at once
 ./ProjectMidas -audio_pump                        # just the block
 ./ProjectMidas -classic -audio_log                # classic mode, log to file
 ./ProjectMidas -n64_aa -audio_log                 # same as the line above
 ```
+
+**`-skip` is about waiting, not about the intro.** The boot sequence holds each
+screen on its own timer (about 4 s for the legal screen, 8 s for the Nintendo
+logo), which is most of a slow launch on a software renderer. `-skip` advances
+the screens with the same transition a timed-out screen uses, so every screen's
+setup and teardown still runs; nothing is bypassed, only the wait.
+
+The count is deliberately small: five screens is the whole chain, so anything
+larger behaves like bare `-skip`. `-skip 0` does nothing.
+
+**`-skip` and `-stage` are different tools.** `-skip` still goes through the
+front end and lands on a menu you can drive; `-stage` skips the front end
+entirely and starts a mission. Use `-stage` when you want gameplay and `-skip`
+when you want a menu with a real background behind it.
+
+**Values come from the next argument**, like `--rom-file` and `--lang`: `-skip 2`
+and `-stage dam`, not `-skip=2`. A word that is not a number after `-skip`
+(`-skip banana`) leaves the flag bare — it skips everything — and the word is
+left alone, so a ROM path can never be eaten by it. `-stage` with nothing after
+it, or followed by another flag, asks for no stage.
 
 **`-classic` and `-n64_aa` are one flag.** The mode was called `n64_aa` because
 it used to be the same ini key as the AA bit; the two are separate settings now

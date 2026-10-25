@@ -5081,6 +5081,31 @@ static void videoApplyBootArgs(void)
         portAudioPumpLogSet(1);
         portConLogf("ge: video: -audio_log -> Data/Logs/audio_pump.log\n");
     }
+    if (s_BootFlags.skip_screens != 0)
+    {
+        portConLogf("ge: video: -skip -> %s\n",
+                    (s_BootFlags.skip_screens < 0) ? "every boot screen, landing on the file select"
+                                                   : "the first boot screens");
+    }
+    if (s_BootFlags.stage != NULL)
+    {
+        portConLogf("ge: video: -stage %s -> straight into the mission\n", s_BootFlags.stage);
+    }
+}
+
+/** -skip [N]: boot screens to skip, 0 = none, -1 = all of them. Read once per
+ *  frontend tick by front.c's boot skip, so the chain lives in one place. */
+s32 videoBootSkipScreens(void)
+{
+    return (s32) s_BootFlags.skip_screens;
+}
+
+/** -stage <name>: the mission to launch directly, or NULL. The same string
+ *  GE_STAGE takes; front.c prefers this over the environment so a script can
+ *  write the flag instead of an env assignment. */
+const char *videoBootStage(void)
+{
+    return s_BootFlags.stage;
 }
 
 s32 videoInit(void)

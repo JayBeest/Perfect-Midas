@@ -37,6 +37,32 @@ Files next to the executable:
 
 An older `ge.ini` is renamed to `midas.ini` automatically on first run.
 
+## Starting up faster
+
+By default the game shows its boot sequence — the legal screen, the Nintendo and
+Rare logos, the eye, and the GoldenEye logo — for about half a minute before you
+reach Select File. Two arguments cut that down.
+
+```
+ProjectMidas -skip            # skip the boot screens, land on Select File
+ProjectMidas -skip 2          # skip two of them, stop on the Rare logo
+ProjectMidas -skip -stage dam # straight into the Dam mission, no menus
+```
+
+- **`-skip`** skips the waiting, not the screens' setup: each one still loads
+  and unloads properly, exactly as it would if you had let its timer run out.
+- **`-skip N`** skips the first N screens. There are five, so bare `-skip` and
+  `-skip 5` land in the same place.
+- **`-stage <name>`** skips the front end entirely and starts a mission. Names:
+  `dam`, `facility`, `runway`, `surface`, `bunker1`, `silo`, `frigate`,
+  `surface2`, `bunker2`, `statue`, `archives`, `streets`, `depot`, `train`,
+  `jungle`, `control`, `caverns`, `cradle`, `aztec`, `egypt`, `citadel`,
+  `complex`, `temple`, `cuba`.
+
+Both are for testing and capture runs; a normal session can just press a button
+to move past the boot screens. The full list of flags, including the diagnostic
+ones (`-audio_pump`, `-audio_log`, `-classic`), is in [CLI.md](CLI.md) §3.2.
+
 ## Building
 
 For a native macOS build, see [the macOS instructions](docs/macos.md). Building on macOS does not require a ROM or extracted assets; playing requires your own US cart image.

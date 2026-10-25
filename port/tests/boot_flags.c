@@ -146,6 +146,99 @@ static void classic_has_two_spellings(void)
       parse(&f, 2, argv); CHECK(f.classic == 0); }
 }
 
+/* ---- -skip and -stage -------------------------------------------------- */
+
+/* A bare -skip means the whole chain, which is the request a person makes:
+ * land on the file select instead of watching five logos. */
+static void skip_bare_means_all(void)
+{
+    PortBootFlags f;
+
+    { char *argv[] = { (char *) "P", (char *) "-skip", NULL };
+      parse(&f, 2, argv); CHECK(f.skip_screens == -1); }
+
+    /* absent: 0, not -1. A parser that defaulted to "all" would skip the boot
+     * sequence of every launch. */
+    { char *argv[] = { (char *) "P", NULL };
+      parse(&f, 1, argv); CHECK(f.skip_screens == 0); }
+}
+
+/* -skip N counts screens, and the count is consumed rather than left to be read
+ * as anything else. */
+static void skip_takes_a_count(void)
+{
+    PortBootFlags f;
+
+    { char *argv[] = { (char *) "P", (char *) "-skip", (char *) "2", NULL };
+      parse(&f, 3, argv); CHECK(f.skip_screens == 2); }
+
+    { char *argv[] = { (char *) "P", (char *) "-skip", (char *) "5", NULL };
+      parse(&f, 3, argv); CHECK(f.skip_screens == 5); }
+
+    /* 0 is off, not "skip none of them but say you did" */
+    { char *argv[] = { (char *) "P", (char *) "-skip", (char *) "0", NULL };
+      parse(&f, 3, argv); CHECK(f.skip_screens == 0); }
+
+    /* a bare -skip outranks a count: the more aggressive request */
+    { char *argv[] = { (char *) "P", (char *) "-skip", (char *) "2",
+                       (char *) "-skip", NULL };
+      parse(&f, 4, argv); CHECK(f.skip_screens == -1); }
+}
+
+/* A non-number after -skip is NOT eaten: the flag keeps its bare meaning and
+ * the argument stays available. This is the rule that keeps a ROM path safe. */
+static void skip_does_not_eat_a_non_number(void)
+{
+    PortBootFlags f;
+
+    { char *argv[] = { (char *) "P", (char *) "-skip", (char *) "/tmp/x.n64", NULL };
+      parse(&f, 3, argv); CHECK(f.skip_screens == -1); }
+
+    { char *argv[] = { (char *) "P", (char *) "-skip", (char *) "banana", NULL };
+      parse(&f, 3, argv); CHECK(f.skip_screens == -1); }
+
+    /* the count is digits only: -skip 2x is not 2, and not a -skip at all */
+    { char *argv[] = { (char *) "P", (char *) "-skip", (char *) "2x", NULL };
+      parse(&f, 3, argv); CHECK(f.skip_screens == -1); }
+}
+
+/* -stage names a mission; the next argument is its value, like --rom-file. */
+static void stage_takes_a_name(void)
+{
+    PortBootFlags f;
+
+    { char *argv[] = { (char *) "P", (char *) "-stage", (char *) "dam", NULL };
+      parse(&f, 3, argv);
+      CHECK(f.stage != NULL && strcmp(f.stage, "dam") == 0); }
+
+    /* absent: NULL */
+    { char *argv[] = { (char *) "P", NULL };
+      parse(&f, 1, argv); CHECK(f.stage == NULL); }
+
+    /* -stage with nothing after it asks for nothing: it must not swallow a
+     * neighbouring flag and try to load a mission called "-audio_pump". */
+    { char *argv[] = { (char *) "P", (char *) "-stage", (char *) "-audio_pump", NULL };
+      parse(&f, 3, argv);
+      CHECK(f.stage == NULL);
+      CHECK(f.audio_pump == 1); }
+
+    { char *argv[] = { (char *) "P", (char *) "-stage", NULL };
+      parse(&f, 2, argv); CHECK(f.stage == NULL); }
+}
+
+/* The two compose, which is the whole point: skip the menus AND name a stage. */
+static void skip_and_stage_compose(void)
+{
+    char *argv[] = { (char *) "P", (char *) "-skip", (char *) "-stage",
+                     (char *) "frigate", (char *) "-audio_log", NULL };
+    PortBootFlags f;
+
+    parse(&f, 5, argv);
+    CHECK(f.skip_screens == -1);
+    CHECK(f.stage != NULL && strcmp(f.stage, "frigate") == 0);
+    CHECK(f.audio_log == 1);
+}
+
 /* A bare word is NOT a flag: the first bare argument is the drag-and-drop ROM
  * path (romdataInit), and nothing may consume it. */
 static void bare_word_is_not_a_flag(void)
@@ -236,6 +329,9 @@ static void known_flags(void)
     CHECK(portBootFlagKnown("-audio_pump"));
     CHECK(portBootFlagKnown("-audio_pump"));
     CHECK(portBootFlagKnown("-audio_log"));
+    CHECK(portBootFlagKnown("-skip"));
+    CHECK(portBootFlagKnown("--skip"));
+    CHECK(portBootFlagKnown("-stage"));
 
     /* the two romdata.c parses, both spellings each. `=value` is the form the
      * first cut of the log reported as UNKNOWN for two working flags. */
@@ -268,6 +364,11 @@ int main(void)
     subset_and_order();
     spelling_variants();
     classic_has_two_spellings();
+    skip_bare_means_all();
+    skip_takes_a_count();
+    skip_does_not_eat_a_non_number();
+    stage_takes_a_name();
+    skip_and_stage_compose();
     bare_word_is_not_a_flag();
     unknown_and_prefix();
     beside_a_rom_path();

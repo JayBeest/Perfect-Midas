@@ -53,6 +53,8 @@
 #   audio_log   the file appears and gains lines            (log, checkable)
 #   n64_aa      Classic Mode reports applied, and the config line that follows
 #               shows low_res=240 / maxfps=-1               (log, checkable)
+#   skip        the log says five boot screens were skipped (log, checkable);
+#               which screen it LANDS on is the capture's job
 #   all         the same as n64_aa but through -classic, the flag's new spelling
 #   audio_pump  the block is DRAWN                          (PIXELS ONLY)
 #   eyeball_*   a capture exists, and the log agrees        (the SCREEN is yours)
@@ -73,7 +75,7 @@ AUDIO_LOG="$BUILD/Data/Logs/audio_pump.log"
 RUN="$ROOT/scripts/port/audio_run.sh"
 
 seconds=8
-cases="eyeball_windowed,eyeball_fullscreen,baseline,audio_pump,audio_log,n64_aa,all"
+cases="eyeball_windowed,eyeball_fullscreen,baseline,audio_pump,audio_log,n64_aa,skip,all"
 outdir=""
 windowed=0
 open_dir=1   # show the folder when done; -O to suppress
@@ -195,6 +197,11 @@ for name in ${cases//,/ }; do
         audio_pump) args="-audio_pump" ;;
         audio_log)  args="-audio_log";  want_log=1 ;;
         n64_aa)     args="-n64_aa" ;;   # the flag's OLD spelling, kept as an alias
+        # -skip: the boot screens go by, and the run lands on Select File. The
+        # assertion is the log line that says so - the SCREEN it lands on is a
+        # capture a person reads, since "is that the file select" is not a
+        # question the log can answer.
+        skip)       args="-skip" ;;
         # ...and "all" uses the NEW one, so one live run exercises each spelling:
         # both are asserted on the config line below, which is the only proof
         # that -classic reaches the same code path -n64_aa does.
@@ -278,6 +285,12 @@ for name in ${cases//,/ }; do
     else
         [ "${loglines:-0}" -eq 0 ] || { status="note (log lines present without -audio_log)"; }
     fi
+    if [ "$name" = "skip" ]; then
+        # "skipping 5 boot screens": the parse ran and the chain was spent. A
+        # -skip that matched nothing would still render and still produce a
+        # capture, so that line is the only evidence the flag did its job.
+        grep -q 'skipping 5 boot screens' "$log" 2>/dev/null || status="FAIL (no '-skip: skipping 5' line)"
+    fi
     [ "$shots" -ge 1 ] || { status="FAIL (no capture - did it render?)"; }
     [ "$rc" -eq 0 ] || status="note (harness exit $rc)"
 
@@ -313,6 +326,7 @@ echo "     baseline            NO block (the flags are what turns it on)"
 echo "     audio_pump          the block, before any stage has loaded"
 echo "     audio_log           no block, but Data/Logs/audio_pump.log gains lines"
 echo "     n64_aa              no block, 240-line render, 4:3 pillars, maxfps=-1 (-n64_aa)"
+echo "     skip                no block, and the run reaches Select File (-skip)"
 echo "     all                 block present, Classic Mode applied via -classic, log writing"
 echo "   Convert one to look at it:"
 first_shot=$(ls "$outdir"/eyeball_windowed/shot_*.bmp 2>/dev/null | tail -1)
