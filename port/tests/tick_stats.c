@@ -162,6 +162,34 @@ static void tick_ini_value(void)
     CHECK(portTickIniValue(-1, NULL, sizeof buf) == NULL);
 }
 
+/* The cap one tick is credited against. Pins the policy the change exists for:
+ * a hold larger than the cap is admitted under hw pacing, and nothing else
+ * moves. The last two cases are the ones that keep the cap honest. */
+static void stall_cap_hold(void)
+{
+    /* hw pacing, a 4-field hold under the 8-field cap: ordinary frames */
+    CHECK(portStatsStepCap(8, 4, 1, 0) == 8);
+    /* hw pacing, a 12-field hold (a load hitch): the hold is admitted */
+    CHECK(portStatsStepCap(8, 12, 1, 0) == 12);
+    /* the model's ceiling */
+    CHECK(portStatsStepCap(8, 30, 1, 0) == 30);
+    /* equal: no change either way */
+    CHECK(portStatsStepCap(8, 8, 1, 0) == 8);
+
+    /* NOT under hw pacing: a window drag in a menu or a demo has no priced
+     * hold behind it and must still be capped. */
+    CHECK(portStatsStepCap(8, 30, 0, 0) == 8);
+    CHECK(portStatsStepCap(8, 30, 0, 1) == 8);
+
+    /* an explicit GE_TICKMAXSTEP is the experiment measuring this cap */
+    CHECK(portStatsStepCap(8, 30, 1, 1) == 8);
+    CHECK(portStatsStepCap(4, 30, 1, 1) == 4);
+
+    /* 0 = uncapped stays uncapped, never "cap of zero" */
+    CHECK(portStatsStepCap(0, 30, 1, 0) == 0);
+    CHECK(portStatsStepCap(0, 0, 1, 0) == 0);
+}
+
 int main(void)
 {
     healthy_60hz();
@@ -173,6 +201,7 @@ int main(void)
     stage_load_reset();
     negative_never_published();
     stall_cap();
+    stall_cap_hold();
     tick_ini_value();
 
     printf("tick_stats: all checks passed\n");

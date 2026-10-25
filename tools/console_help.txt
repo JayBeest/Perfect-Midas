@@ -266,6 +266,53 @@ READING THE BLOCK
             open.
 
 
+THE HITCH LINE
+
+  Separate from the audio columns, the game can explain a slow frame on the
+  run log (Data/Logs/ge_direct.log on Windows; stdout elsewhere):
+
+      ge: hitch: 894.0 ms frame (stage 33, tick60, render thread off) |
+        render: gl 890.2 swap 1.7 lim 0.0 idle 2.0 | sim: longest 890.4 ms,
+        pacer 0.0 ms, 1 tick(s) 8 fld credit 8 of 53 pacer asked 4 |
+        draws 201 | no timed events
+
+  It is off by default (frames of 25 ms or more only). Turn it on and off
+  with cl_hitchms - `cl_hitchms 1` logs every frame, `cl_hitchms 0` silences
+  it; the value is not saved to midas.ini. The line divides the frame into
+  render time (gl / swap / the max-fps limiter / idle), simulation time (the
+  longest stretch of game code, how long the pacer slept, ticks and fields
+  credited) and a count of what was loaded.
+
+  Two fields need explaining, and neither is a yardstick for the other:
+
+  credit a of b   The stall cap fired. A tick measured b fields of elapsed
+            time and was allowed to advance a. Its presence means simulated
+            time was dropped - b minus a fields of it - and a here is the
+            default cap of 8. This is the per-frame evidence of the game
+            running in slow motion; f/s shows the same loss only afterwards,
+            averaged away. Absent from the line means no time was dropped.
+
+  pacer asked n   Hardware pacing only (Max FPS -1): the fields the N64 would
+            have needed to draw the frame, which the game then waits for. It
+            is not a prediction of how long the frame took - on a slow
+            renderer the frame takes far longer than n, and that is exactly
+            when credit appears beside it.
+
+  How they fit together. Hardware pacing waits for n fields, so those n are
+  intended time and the cap must not cut them short: under hardware pacing
+  the cap yields to the hold, and a frame that was one long hold reads
+  `credit 12 of 57 pacer asked 12` - the 12 credited is the hold, and the
+  remaining 45 fields are the renderer being slower still. A line reading
+  `credit 8 of 53 pacer asked 4` is the other case: the frame cost 53 fields
+  because the renderer was slow, but the game only asked for 4, so 8 is a
+  genuine limit and the missing 45 fields really are thrown away. Read pacer
+  asked before concluding that the cap is at fault.
+
+  If you are reporting a frame-rate or slow-motion problem rather than a
+  sound one, this line is the one to attach: cl_hitchms 1, reproduce, and send
+  the `ge: hitch:` lines with your audio log.
+
+
 WHAT TO REPORT
 
   For any sound problem, include:

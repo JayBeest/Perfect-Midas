@@ -335,7 +335,9 @@ if (portTickMaxStep() > 0 && elapsed > (u32) portTickMaxStep() * PORT_TICK_FIELD
 ```
 
 `portTickMaxStep()` defaults to **8 fields** (`frametiming.c`,
-`portTickMaxStep`), i.e. 133 ms.
+`portTickMaxStep`), i.e. 133 ms. *(The clamp now asks
+`portTickCreditCap()`, which is this number unless a hw-pacing hold was larger —
+see "D5 is DECIDED" below. The snippet above is the defect as it was found.)*
 
 So for any frame the model prices at N > 8 fields, the loop **waits** the full
 N fields and then **discards** (N − 8) of them. At the model's own ceiling
@@ -396,27 +398,93 @@ false at stage 90 (`portStageRunning()` is false outside a stage), so no hold wa
 applied and the 466 ms was pure software rasterisation. The cap fired anyway —
 it is not a hw-mode-only defect.
 
-#### D5 is DEFERRED, not fixed (2026-10-25, third-pass audit)
+#### D5 is DECIDED and fixed (2026-10-25, NEXT_AGENT_V3.md Task B)
 
-The clamp is confirmed and the loss is real. The decision it needs — whether a
-*deliberate* hold should be clamped at all — is a pacing change, and this branch
-does not touch pacing. Recorded so it is not lost:
+The clamp was confirmed and the loss was real. The section above is kept as it
+was written, because it records the objection the decision had to answer.
 
-- `boss.c` held the loop for N fields, so it already *knows* the elapsed time
-  was intended. One candidate fix passes that expectation into
-  `waitForNextFrame` and raises the cap to `max(8, N)` for that tick.
-- The counter-argument is §5.2's own: the cap exists because the caller cannot
-  in general tell a hold from a window drag, and threading the expectation
-  through adds a cross-module contract that can itself be wrong.
-- Whichever way it goes, the hw model's 6-field render cap, the 30-field total
-  cap (§10) and the 8-field credit cap are three caps on one quantity and
-  should be decided together rather than one at a time.
+**The decision.** Under hardware pacing the credit cap yields to the hold: a
+tick is credited `max(cap, hold)` fields, so the N fields `boss.c` waited for
+are the N fields the simulation receives. The policy is one pure function,
+`portStatsStepCap` (`port/src/tick_stats.c`), with its whole table under
+`ctest` in `port/tests/tick_stats.c`.
 
-Fixed by this commit: the hitch line now reports the clamp at the clamp site —
+The counter-argument above — thread the expectation through and you add a
+contract that can be wrong — is answered by *where* the hold is read rather
+than by asserting it is safe. `boss.c` does not call into the credit path at
+all. `portHwPaceFields()` already published the hold it priced
+(`g_PortHwFieldsHeld`, added by `6d02aa1` for the hitch log), so the clamp
+reads a number the pacer wrote. The data flow stays one-way: pacer publishes,
+clamp reads. No new parameter, no new call site, nothing for `boss.c` to get
+wrong.
+
+What keeps the cap honest, and each of these is a test case:
+
+- **Not a blank cheque.** The raise is only to the hold, and `portHwPaceFields`
+  caps the hold at 30 fields. A 90-second window drag cannot become one
+  90-second step.
+- **Only under hw pacing** (`portTickHwPace()`, not the configured tick rate).
+  A drag in a menu, in a demo, or outside a stage has no priced hold behind it
+  and still clamps at 8. `portTickHwPace()` is already false for all three.
+- **An explicit `GE_TICKMAXSTEP` is obeyed exactly.** It is how this cap is
+  measured, so the mechanism must not override the experiment measuring it.
+- **`0` still means uncapped**, never "cap of zero".
+
+**The third position was not taken.** "Make the hold authoritative: admit N
+without re-deriving it" is what this does *not* do, and the reason is the same
+one that made the original cap necessary: the elapsed wall clock is still
+measured and still compared. The hold only sets the ceiling; if the frame ran
+longer than the hold, the excess is still dropped and still reported. A patch
+that trusted the hold blindly would simulate time that never elapsed.
+
+**The three caps (§10), decided together, explicitly:**
+
+- **The 8-field credit cap** — raised to the hold under hw pacing. This is the
+  one that was silently truncating deliberate holds.
+- **The 6-field render cap** — **left alone.** It bounds the *fit*, not the
+  tick: it was fitted against hardware footage and nothing here can improve on
+  that fit. §10's open question is whether that footage contained load hitches;
+  it remains open, and it is a question about the fit's accuracy, not about
+  whether a priced hold may be credited. Load charges are added *after* this
+  cap (`portHwPaceFields`), so a frame priced above 8 fields is always a load
+  charge on top of a saturated render model — which is why the raise only ever
+  fires on load frames in practice (measured below).
+- **The 30-field total cap** — **left alone**, and it is now the bound on the
+  raise too. It is a safety limit on the model's own output, not a credit rule.
+
+**Verified by execution** (macOS, Apple Software Renderer, `GE_STAGE=dam`,
+`GE_HWSCALE=3` to push priced holds above the cap, `cl_audio_log 1`, the user's
+`midas.ini` restored afterwards):
+
+```
+   8 credit 8 of 52 pacer asked 6     <- hold under the cap: still clamps at 8
+   6 credit 8 of 54 pacer asked 6     <-   (the 52 fields are the renderer)
+   1 credit 12 of 57 pacer asked 12   <- hold over the cap: the hold is admitted
+```
+
+One frame in fifteen carried a hold above 8, and that frame is the one whose
+credit changed from 8 to 12. `GE_HWSCALE=3` also shows *why* holds are rarely
+above 8 in practice: scaling the render model 3x saturates it against its own
+6-field cap, so a hold of 12 is 6 render fields plus a ~100 ms load charge. The
+cap's raise therefore lands on load frames, which is exactly the population D5
+was about.
+
+**Not verified.** Real hardware. Every number above comes from a software
+renderer where frames cost ~890 ms, so the renderer, not the model, sets the
+frame length; the raise is exercised (the hold exceeds the cap and is admitted)
+but the *feel* of a correct hw-pacing session at 30 fields is not reproduced
+here. The 30-field boundary is covered by the unit test only. Windows and Linux
+not run.
+
+Fixed by the earlier commit: the hitch line now reports the clamp at the clamp
+site —
 `credit N of M`, e.g. `credit 8 of 53` — instead of inviting a comparison of
 `fld` against the model's hold, which did not measure the loss (see the
 third-pass audit, `docs/port/audio-pump-audit-pass3.md` F1). The model's figure
 is renamed `pacer asked N` so it is not read as a baseline for the credit.
+`tools/console_help.txt` now documents both fields for the first time
+(audit §8.2): `credit` was the branch's only per-frame evidence of the loss and
+had no shipped text at all.
 
 ### 5.3 Two defects in the fix itself, found by review
 
@@ -583,6 +651,11 @@ undercuts the rest of the file.
   `frametiming.c`, `portTickGateCounts()`.
 - **`portTickMaxStep()`** — default 8 fields (133 ms), `0` = uncapped.
   `GE_TICKMAXSTEP`. `frametiming.c`, `portTickMaxStep()`. Stall cap; see D5.
+- **`portTickCreditCap()`** — the cap a tick is actually credited against:
+  `portTickMaxStep()`, raised to the hw-pacing hold (`g_PortHwFieldsHeld`) when
+  that is larger and hw pacing is in force; 0 stays 0; an explicit
+  `GE_TICKMAXSTEP` wins. Policy in `portStatsStepCap()` (`tick_stats.c`).
+  `frametiming.c`, `portTickCreditCap()`. See D5.
 - **`portHwPaceFields()`** — 1..30 fields, render model capped at 6 before load
   charges. `frametiming.c`, `portHwPaceFields()`.
 - **`portTickHz()`** — from `GE_TICKHZ` (wins) → `midas.ini tickhz` → 60 as the
@@ -646,6 +719,12 @@ is still open". It has since been measured, and it does not. See §11.1.
   three caps for one quantity.
   Whether the render cap was fitted against footage that already contained
   load hitches is worth knowing before changing any of them.
+
+  **Decided (Task B, 2026-10-25):** only the credit cap moved, and only under
+  hardware pacing; the 6-field render cap and the 30-field total cap are left
+  alone, with the reasons in §5.2. The render-cap question above is still open
+  and is still about the quality of the fit — it is not a licence to credit
+  fewer fields than the pacer waited for, which is what D5 was.
 - `g_PortTicksAdmitted` was suggested here as the counter to publish for `tk`.
   That was wrong: it is incremented before the `pendingGfx < 2` backpressure
   guard, so it counts ticks that never reached `lvlTick`. `tk` publishes

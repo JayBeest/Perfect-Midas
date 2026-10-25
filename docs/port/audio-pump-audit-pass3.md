@@ -20,9 +20,11 @@ branch as it was audited. Two follow-up commits address it: `52807f7` corrects
 F2, F4, F5 and F6 and the manual side of F3, and `cb98c39` fixes F1 by reporting
 the stall cap at the clamp site (`credit N of M`) instead of inviting the `fld`
 versus `model held` comparison. §6 records the post-fix numbers to beat. **F3's
-code half and D5 remain open** and are handed to `NEXT_AGENT_V3.md`. The findings
-below are left as written, including the self-correction under F2, because the
-record of a wrong first conclusion is worth more than a tidy one.
+code half and D5 were both open when this file was written and are now closed**
+by `NEXT_AGENT_V3.md`'s Tasks A and B; §6 records both, including a wrong first
+cut of the F3 fix. The findings below are left as written, including the
+self-correction under F2, because the record of a wrong first conclusion is
+worth more than a tidy one.
 
 ---
 
@@ -326,7 +328,9 @@ about.
 - **`GE_TICKMAXSTEP` truncating a deliberate hw hold (D5).** Code defect, and
   §5.2 of the design record describes it exactly as it behaves — measured here at
   8 credited against 22 elapsed per frame. Finding F1 is separate: it is the
-  *instrument* that misreports D5, not the D5 description.
+  *instrument* that misreports D5, not the D5 description. **Fixed** — under hw
+  pacing the cap now yields to the hold; see §6, which is where the resolution
+  and the numbers are recorded.
 
 ---
 
@@ -474,9 +478,48 @@ Measured in the same hw-pacing Dam configuration as `run7`:
 The before/after is the point: the same windows that read `8 fld model held 4`
 — healthy by the old rule — now read `credit 8 of 53`.
 
-**What is still open.** D5 itself (the clamp versus a deliberate hold) is
-deferred to `NEXT_AGENT_V3.md`, which also inherits the unverified items in §2
-and two design documents that are cited but do not exist.
+**What is still open.** The unverified items in §2, and the two design
+documents that are cited but do not exist. D5 is no longer among them — see
+below.
+
+### D5 — decided and fixed (`NEXT_AGENT_V3.md` Task B)
+
+D5 said `tickhz=hw` waits for up to 30 fields and credits at most 8. Under
+hardware pacing the credit cap now yields to the hold the pacer waited for:
+`portStatsStepCap` (`port/src/tick_stats.c`), applied by
+`portTickCreditCap()` in `frametiming.c`. The hold is read from
+`g_PortHwFieldsHeld` — the number `portHwPaceFields()` already published — so
+`boss.c` gains no parameter and the pacer/clamp contract stays one-way. An
+explicit `GE_TICKMAXSTEP` still wins, `0` still means uncapped, and without
+`portTickHwPace()` nothing moves, so a window drag is still capped.
+
+Of the three caps on this quantity (§10), only the credit cap moved. The
+6-field render cap and the 30-field total cap are left alone, with reasons in
+`docs/port/tick-and-field-accounting.md` §5.2.
+
+Measured (macOS, Apple Software Renderer, `GE_STAGE=dam`, `GE_HWSCALE=3` to
+price holds above the cap, `cl_audio_log 1`, user's `midas.ini` restored):
+
+```
+   8 credit 8 of 52 pacer asked 6     hold under the cap: still clamps at 8
+   6 credit 8 of 54 pacer asked 6
+   1 credit 12 of 57 pacer asked 12   hold over the cap: the hold is admitted
+```
+
+That single `12 of 57` is the fix working: the same frame read `8 of 57`
+before. The 14 frames with a 6-field hold clamp at 8 exactly as they should,
+because 6 < 8 and the other 46-48 fields are the software renderer, not a
+hold. `ctest` 9/9, with `tick_stats` grown by the `stall_cap_hold` policy table
+(each clause above is a case).
+
+**Not verified:** real hardware. The raise is exercised here, but the feel of a
+correct hw session at the model's 30-field ceiling is not; the 30-field
+boundary is covered by the unit test only. Audit §2's hardware items stay
+unverified.
+
+Also closed here: audit §8.2's gap. `credit N of M` and `pacer asked N` now
+have a shipped explanation — `tools/console_help.txt`, section THE HITCH LINE,
+including which of the two to read before blaming the cap.
 
 ### F3's code half — resolved (`NEXT_AGENT_V3.md` Task A)
 

@@ -81,6 +81,29 @@ uint32_t portStatsFieldsPerTickX100(uint32_t fields, uint32_t ticks);
 uint32_t portStatsMeasuredFields(uint32_t elapsed_counts, uint32_t field_counts);
 uint32_t portStatsCreditedFields(uint32_t measured, uint32_t cap_fields);
 
+/** The cap the credit path should use for one tick.
+ *
+ * `cap_fields` is portTickMaxStep() (0 = uncapped) and `cap_explicit` says
+ * whether GE_TICKMAXSTEP set it. `hold_fields` is the deliberate hw-pacing hold
+ * boss.c just applied, and `hw_pace` is portTickHwPace().
+ *
+ * The stall cap exists to stop an *unintended* stall (a window drag) from being
+ * simulated as one enormous step. A hold is not that: the pacer priced the
+ * frame at N fields and the loop waited for them, so those N are intended time
+ * and the cap must not truncate the thing it was handed. Under hw pacing the
+ * cap is therefore raised to the hold when the hold is larger.
+ *
+ * Three qualifications, all deliberate:
+ *  - `cap_fields == 0` stays uncapped; 0 means "no cap", not "cap of zero".
+ *  - an explicit GE_TICKMAXSTEP is obeyed exactly. It is how this cap is
+ *    measured, so the mechanism must not override the experiment measuring it.
+ *  - without hw pacing there is no priced hold to trust, so nothing moves. A
+ *    window drag in any other mode is still capped.
+ *
+ * The raise is bounded by the caller's hold, which portHwPaceFields() itself
+ * caps at 30 fields - the model's own ceiling, not a number invented here. */
+uint32_t portStatsStepCap(uint32_t cap_fields, uint32_t hold_fields, int hw_pace, int cap_explicit);
+
 /** The text midas.ini's `tickhz` line should hold for a resolved tick rate.
  *
  * -1 is hw pacing and is written as the literal "hw"; 0 means uncapped and any

@@ -94,16 +94,67 @@ static s32 portTickMaxStep(void)
     return cap;
 }
 
+/* 1 when GE_TICKMAXSTEP set the cap: an experiment, obeyed exactly (see
+ * portTickCreditCap). */
+static s32 portTickMaxStepExplicit(void)
+{
+    extern char *getenv(const char *);
+    const char *e = getenv("GE_TICKMAXSTEP");
+
+    return (e != NULL && *e != '\0') ? 1 : 0;
+}
+
+/** The stall cap for the tick being measured, in fields (0 = uncapped).
+ *
+ * The 8-field cap cannot tell an unintended stall from a deliberate hold, so
+ * it truncated the holds tickhz=hw had just waited for: boss.c held the loop
+ * for the N fields portHwPaceFields() priced, then this cap kept 8 of them and
+ * the difference was simulated time thrown away (the audit measured 45-50
+ * fields per frame in Dam).
+ *
+ * Under hw pacing the hold IS the intended duration, so the cap admits it. The
+ * decision itself is portStatsStepCap() (port/src/tick_stats.c), a pure
+ * function with the policy table under ctest; this only gathers the three
+ * inputs. Three of those matter:
+ *
+ *  - portTickHwPace(), not the configured tickhz: a window drag in a menu or a
+ *    demo has no priced hold behind it and stays capped at 8.
+ *  - g_PortHwFieldsHeld is the hold boss.c just waited for, published by
+ *    portHwPaceFields() when it priced the frame. Reading it here is what
+ *    keeps the contract one-way: the pacer publishes, the clamp reads, and no
+ *    expectation is threaded back through boss.c (the objection recorded in
+ *    docs/port/tick-and-field-accounting.md 5.2).
+ *  - an explicit GE_TICKMAXSTEP wins, because it is how this cap is measured.
+ *
+ * Bounded by the hold, which portHwPaceFields() caps at 30 fields - so the
+ * worst case admitted is the model's own ceiling, not an unbounded stall. */
+static u32 portTickCreditCap(void)
+{
+    extern s32 g_PortHwFieldsHeld;   /* below: the hold the pacer published */
+    const s32 cap = portTickMaxStep();
+
+    if (cap == 0)
+    {
+        return 0; /* uncapped: portStatsStepCap keeps 0 as 0 */
+    }
+
+    return portStatsStepCap((u32) cap,
+                            (u32) __atomic_load_n(&g_PortHwFieldsHeld, __ATOMIC_RELAXED),
+                            (int) portTickHwPace(),
+                            (int) portTickMaxStepExplicit());
+}
+
 /** Publish the stall cap's verdict for the frame just measured.
  *
- * Called from waitForNextFrame *before* it clamps, with the raw elapsed counts,
- * because afterwards the number is gone. Only the game thread runs this, so the
- * read-modify-write of the sequence is single-writer; the render thread only
- * reads (port/src/hitchlog.c). */
-static void portTickNoteClamp(u32 elapsed_counts)
+ * Called from waitForNextFrame *before* it clamps, with the raw elapsed counts
+ * and the cap that is about to be applied - the same one the caller uses, so
+ * the reported credit cannot disagree with the credit taken. Only the game
+ * thread runs this, so the read-modify-write of the sequence is single-writer;
+ * the render thread only reads (port/src/hitchlog.c). */
+static void portTickNoteClamp(u32 elapsed_counts, u32 cap)
 {
     const u32 measured = portStatsMeasuredFields(elapsed_counts, PORT_TICK_FIELD_COUNTS);
-    const u32 credited = portStatsCreditedFields(measured, (u32) portTickMaxStep());
+    const u32 credited = portStatsCreditedFields(measured, cap);
 
     __atomic_store_n(&g_PortTickClampMeasured, measured, __ATOMIC_RELAXED);
     __atomic_store_n(&g_PortTickClampCredited, credited, __ATOMIC_RELAXED);
@@ -1206,17 +1257,19 @@ void waitForNextFrame(void) //maybe WaitForTick
       u32 now = osGetCount();
       u32 elapsed = now - copy_of_osgetcount_value_1;
       s32 whole;
+      u32 cap = portTickCreditCap();
 
       frameDelay = 1;
 
-      /* Stall cap: a tick advances at most portTickMaxStep() fields and the
-       * rest of a stall is dropped, so a long hitch such as a window drag is
-       * not simulated as one huge step. Report the drop here, where both
-       * halves are still known. */
-      if (portTickMaxStep() > 0 && elapsed > (u32) portTickMaxStep() * PORT_TICK_FIELD_COUNTS)
+      /* Stall cap: a tick advances at most `cap` fields and the rest of a stall
+       * is dropped, so a long hitch such as a window drag is not simulated as
+       * one huge step. Report the drop here, where both halves are still
+       * known. `cap` is portTickCreditCap(): still 8 unless a hw-pacing hold
+       * was larger, in which case the hold is admitted. */
+      if (cap > 0 && elapsed > cap * PORT_TICK_FIELD_COUNTS)
       {
-          portTickNoteClamp(elapsed);
-          elapsed = (u32) portTickMaxStep() * PORT_TICK_FIELD_COUNTS;
+          portTickNoteClamp(elapsed, cap);
+          elapsed = cap * PORT_TICK_FIELD_COUNTS;
           portTickFieldAccum = 0;
       }
 
@@ -1306,6 +1359,7 @@ void waitForNextFrame(void) //maybe WaitForTick
       u32 now;
       u32 elapsed;
       s32 whole;
+      u32 cap = portTickCreditCap();
 
       do {
           now = osGetCount();
@@ -1316,10 +1370,10 @@ void waitForNextFrame(void) //maybe WaitForTick
 
       /* Stall cap - same policy and knob as the general path above, and the
        * same report. */
-      if (portTickMaxStep() > 0 && elapsed > (u32) portTickMaxStep() * PORT_TICK_FIELD_COUNTS)
+      if (cap > 0 && elapsed > cap * PORT_TICK_FIELD_COUNTS)
       {
-          portTickNoteClamp(elapsed);
-          elapsed = (u32) portTickMaxStep() * PORT_TICK_FIELD_COUNTS;
+          portTickNoteClamp(elapsed, cap);
+          elapsed = cap * PORT_TICK_FIELD_COUNTS;
           portTickFieldAccum = 0;
       }
 

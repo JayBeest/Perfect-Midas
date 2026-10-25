@@ -60,6 +60,15 @@ uint32_t portStatsCreditedFields(uint32_t measured, uint32_t cap_fields)
     return cap_fields;
 }
 
+uint32_t portStatsStepCap(uint32_t cap_fields, uint32_t hold_fields, int hw_pace, int cap_explicit)
+{
+    if (cap_fields == 0 || cap_explicit || !hw_pace) {
+        return cap_fields; /* uncapped, or the cap is not ours to move */
+    }
+
+    return (hold_fields > cap_fields) ? hold_fields : cap_fields;
+}
+
 const char *portTickIniValue(int tickhz, char *buf, unsigned len)
 {
     if (buf == NULL || len == 0) {
