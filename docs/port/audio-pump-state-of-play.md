@@ -217,19 +217,47 @@ buffer. White reads as a broken application where black would read as a loading
 screen. Not investigated; not known to be macOS-only. Recorded in
 `tick-and-field-accounting.md` §11.2.
 
-### 4.6 New: the audio pump has almost no queue headroom — reported, not fixed
+### 4.6 The pump's underrun ratchet could not fire below ~8.6 fps — fixed
 
-Found on 2026-10-25 while checking an audio complaint, not investigated. At
-1 fps the pump sizes its buffer to roughly one frame — `que 77615/77703B`,
-880 ms buffered against an 881 ms target under a 927 ms cap. A frame that
-overshoots the target drains it completely; one `dry 1` event was observed in
-23 lines. The columns were otherwise clean (`over 0 skip 0 stall 0`, the mixer
-holding real time).
+Found on 2026-10-25 while checking an audio complaint, then fixed here.
 
-Not the same as the audible artefact in that session, which was the world at
-9.2 fields/s against music sequenced at wall rate — the documented D5-era
-mismatch, unchanged by the recent work. This one is a separate, smaller defect
-about buffer sizing.
+**Was wrong.** The queue target was `max(ratcheted, one interval + device
+period)`. The interval floor is a frame-rate quantity (~870 ms at 1 fps); the
+ratchet that learns from underruns is capped in absolute bytes (10 KB = 116 ms).
+So below about 8.6 fps the floor won unconditionally and every underrun the pump
+learned from was discarded on the next pump. The queue sat at exactly one
+interval + 12 ms — a 12 ms tolerance for the next frame being slower, 1.4% of
+the interval at 1 fps.
+
+**Is true now.** `portAudioPaceEffectiveTarget()` returns
+`max(configured, interval floor) + learned`, so the headroom lands on top of the
+floor instead of competing with it. Ordinary frame rates are unchanged; the
+raise is bounded by `TARGET_MAX - TARGET` (76 ms).
+
+**Verified without a device.** All the existing simulations pumped at a
+*constant* interval, which cannot starve — the pump sizes for the interval it
+just measured. The new `simulate_jitter` drains the elapsed interval before the
+refill, so a longer interval can starve it. At 1 fps with every fifth pump 70 ms
+longer, over 120 s, both policies driven from the same ratchet:
+
+```
+legacy  max(ratcheted, floor):  27 dry events, peak queue  952 ms
+now     floor + learned:         5 dry events, peak queue 1011 ms
+```
+
+**Verified live** (Apple Software Renderer, Dam, 1 fps): after a `dry` the
+target climbs `1041 → 1053 → 1064 ms`, one 1024-byte step per pump; before, it
+stayed pinned at `interval + 12`.
+
+**Not fixed.** A spike larger than the whole learned ceiling — a stage load —
+still empties the queue. One was observed at the transition into Dam. No bounded
+ratchet covers an unbounded spike.
+
+**Not verified.** Real hardware; all measurements are the software renderer, and
+the audibility of a 12 ms vs 76 ms cushion is not something this machine can
+tell you.
+
+Details in `docs/port/audio-pump-history.md` §9.
 
 ### 4.7 Not verified anywhere
 

@@ -125,6 +125,36 @@ unsigned portAudioPaceRefill(unsigned queued_bytes, unsigned target,
 unsigned portAudioPaceMinTarget(unsigned dt_ms, const PortAudioPaceCfg *cfg);
 
 /*
+ * The queue target the pump should actually steer toward: the interval floor
+ * (or the configured target, whichever is larger) PLUS whatever the underrun
+ * ratchet has learned, on top.
+ *
+ * Why the sum and not a maximum. The ratchet exists so a sink that has starved
+ * is given more room; it steps up by target_step per underrun to a ceiling of
+ * target_max (10 KB, 116 ms at 22050 Hz). The interval floor, meanwhile, is a
+ * frame-RATE quantity: at 1 fps it is ~870 ms of audio. The pump used to take
+ * max(ratcheted, floor), which means that at any frame rate whose interval
+ * exceeds target_max - i.e. below about 8.6 fps - the floor won unconditionally
+ * and the ratchet was inert. Every underrun was learned and immediately
+ * discarded, so the queue stayed at exactly one interval plus one device period
+ * of cushion (12 ms), and the next interval a few tens of milliseconds longer
+ * drained it to zero.
+ *
+ * Measured on a software-rendered session at 1 fps: a pump interval of 868 ms
+ * produced a target of 880 ms, i.e. a 12 ms tolerance for the next frame being
+ * slower, with a `dry` event at the one frame that jumped to 958 ms.
+ *
+ * The sum keeps ordinary frame rates identical - there the floor is below the
+ * configured target and the learned term is what moves - and gives low frame
+ * rates the headroom the ratchet was always meant to provide, bounded by
+ * target_max - target. Latency rises with it; docs/port/audio-pump-history.md
+ * and tools/console_help.txt both record that at single-digit frame rates a
+ * backlog is preferred to a gap.
+ */
+unsigned portAudioPaceEffectiveTarget(unsigned floor_bytes, unsigned ratcheted,
+                                      const PortAudioPaceCfg *cfg);
+
+/*
  * The backlog cap: never below cfg->queue_max, and never so shallow that a
  * target at the pump-interval floor cannot be reached.
  *

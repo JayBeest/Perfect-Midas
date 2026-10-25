@@ -93,6 +93,29 @@ unsigned portAudioPaceMinTarget(unsigned dt_ms, const PortAudioPaceCfg *cfg)
     return (unsigned) (bytes + margin);
 }
 
+unsigned portAudioPaceEffectiveTarget(unsigned floor_bytes, unsigned ratcheted,
+                                      const PortAudioPaceCfg *cfg)
+{
+    unsigned long long base;
+    unsigned long long learned;
+
+    /* The floor is the interval the pump must bridge; the configured target is
+     * the depth it aims for at ordinary frame rates. */
+    base = ((unsigned long long) floor_bytes > cfg->target) ? floor_bytes : cfg->target;
+
+    /* Whatever the ratchet has learned from underruns goes ON TOP of that base.
+     * It must not merely compete with it (see the header): at a low frame rate
+     * the floor is hundreds of milliseconds while the ratchet's ceiling is
+     * TARGET_MAX, so a max() silently discards every bit of learned headroom. */
+    learned = ((unsigned long long) ratcheted > cfg->target)
+            ? (unsigned long long) ratcheted - cfg->target : 0;
+
+    if (base + learned > 0xFFFFFFFFu) {
+        return 0xFFFFFFFFu;
+    }
+    return (unsigned) (base + learned);
+}
+
 unsigned portAudioPaceCap(unsigned target, const PortAudioPaceCfg *cfg)
 {
     unsigned long long need = (unsigned long long) target

@@ -1329,16 +1329,12 @@ void portAudioPump(void)
     /* A target below one pump interval cannot work: between two pumps the device
      * drains dt of audio and the refill stops at the target, so a shallower
      * queue starves every pump. Measured at 20 fps with a 40 ms target, the sink
-     * ran dry every single pump. The effective target is therefore the larger of
-     * the ratcheted target and one interval plus a device period. */
-    target = s_TargetState.target;
-    {
-        u32 floor_bytes = portAudioPaceMinTarget(dt, &s_PaceCfg);
-
-        if (floor_bytes > target) {
-            target = floor_bytes;
-        }
-    }
+     * ran dry every single pump. The effective target is therefore the interval
+     * floor plus the headroom the underrun ratchet has learned - NOT the larger
+     * of the two, which made the ratchet inert below ~8.6 fps (audio_pace.h,
+     * portAudioPaceEffectiveTarget). */
+    target = portAudioPaceEffectiveTarget(portAudioPaceMinTarget(dt, &s_PaceCfg),
+                                          s_TargetState.target, &s_PaceCfg);
 
     /* And the cap has to follow: at 5 fps one interval (200 ms) is already more
      * than a fixed 16 KB cap (185 ms), so a single-digit frame rate would starve

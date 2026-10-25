@@ -327,7 +327,10 @@ Two further traps found the same way, both invisible to the tests that existed:
 - A queue target **below one pump interval** starves by construction: between two
   pumps the device drains that interval, and refilling stops at the target. At
   20 fps a 40 ms target guaranteed a dry pump every pump. The effective target is
-  `max(target, one interval + a device period)`.
+  `one interval + a device period + whatever the ratchet has learned`.
+
+  *(That last term was originally `max(target, one interval + a device period)`.
+  See §9: the maximum made the ratchet inert below ~8.6 fps.)*
 
 Both now have tests named after them.
 
@@ -401,7 +404,8 @@ Everything needed is nearly in place. What to ask the reporter for, or to add:
    correction is a few samples of frame length, never a whole field.
 2. ~~**Give the queue a real safety net.**~~ **DONE (this branch).** The target
    ratchets up on an underrun and eases back only in a clean 10 s window, and the
-   effective target is floored at one pump interval plus a device period.
+   effective target is floored at one pump interval plus a device period, with
+   the learned headroom ADDED to that floor (see §9).
 3. ~~**Land the tested policy.**~~ **DONE (this branch).** `audio_pace.c` and
    `port/tests/audio_pace.c` are in the build behind `GE_PORT_TESTS=ON`, with
    cases named after the two bugs found on hardware.
@@ -425,6 +429,70 @@ Everything needed is nearly in place. What to ask the reporter for, or to add:
 
 ---
 
+## 9. The ratchet was inert below ~8.6 fps
+
+Found 2026-10-25 while chasing a report of music hitching more on a slow
+renderer, not by a test. It is worth recording because it is §7's own trap in a
+later fix, and because every test that existed still passed.
+
+**What was wrong.** §7 records that a target below one pump interval starves by
+construction, and fixes it with a floor: `max(target, one interval + a device
+period)`. Separately, `portAudioPaceTargetStep` ratchets the target up by 1024
+bytes per underrun, to a ceiling of `TARGET_MAX` = 10 KB = **116 ms**, easing
+back only in a clean window.
+
+The two are in different units of thought. The floor is a *frame-rate* quantity
+and reaches ~870 ms at 1 fps; the ratchet is an *absolute* byte budget of
+116 ms. So `max(ratcheted, floor)` meant that at any frame rate below about
+8.6 fps the floor won unconditionally and **every underrun the pump learned from
+was discarded on the next pump.** The safety net in §8's item 2 could not deploy
+where it was needed.
+
+The practical effect: the queue sat at exactly one interval plus the 12 ms device
+period, i.e. a 12 ms tolerance for the next frame being slower. At 1 fps
+(870 ms intervals) that is 1.4% of headroom, and ordinary frame-to-frame
+variance walks through it.
+
+**What is true now.** `portAudioPaceEffectiveTarget` (`audio_pace.c`) returns
+`max(configured, interval floor) + learned`, so the ratchet's headroom lands on
+top of the floor instead of competing with it. Ordinary frame rates are
+unchanged — there the configured target is the base and the learned term is what
+moves — and single-digit rates get the net §8 promised, bounded by
+`TARGET_MAX - TARGET` (76 ms).
+
+**Measured, without a device.** The simulations in `port/tests/audio_pace.c` all
+pumped at a *constant* interval, which is why none of them saw this: a pump that
+measures the elapsed interval and refills for it cannot starve on an even
+cadence. The new `simulate_jitter` drains the elapsed interval **before** the
+refill, so an interval longer than the one before it can starve the queue. At
+1 fps with every fifth pump 70 ms longer, over 120 s, driving both policies from
+the same ratchet:
+
+```
+legacy  max(ratcheted, floor):  27 dry events, peak queue  952 ms
+now     floor + learned:         5 dry events, peak queue 1011 ms
+```
+
+Five, not zero, because the ratchet learns 11.6 ms per underrun and the first few
+spikes are surprises. That is the mechanism working as designed rather than
+suppressed.
+
+**Measured live** (Apple Software Renderer, Dam, 1 fps, `cl_audio_log 1`): after a
+`dry` at t=43.5 s the target climbed `1041 → 1053 → 1064 ms`, one 1024-byte step
+per pump. Under the old rule it stayed pinned at `interval + 12` indefinitely.
+
+**Cost, stated plainly.** ~59 ms of extra latency at 1 fps, growing to the 76 ms
+cap. §7's own note and `tools/console_help.txt` prefer a backlog to a gap at
+single-digit frame rates; this spends latency to buy continuity, and only where
+the frame rate is already too low for the difference to be heard.
+
+**Not fixed.** A spike larger than the whole learned ceiling (a stage load, a
+compile hitch) still empties the queue; one was observed at the transition into
+Dam. No bounded ratchet can cover an unbounded spike, and covering it would mean
+holding an unbounded backlog.
+
+---
+
 ## Appendix — line references (in the shipped tree)
 
 - `port/src/audio_pc.c:79-104` — pacing config (`RATE`, `TARGET_MS`,
@@ -442,7 +510,7 @@ Everything needed is nearly in place. What to ask the reporter for, or to add:
 - `port/src/audio_pace.c` — the policy: `portAudioPaceRefill` (device-paced),
   `portAudioPaceFrame` (both paths), `portAudioPaceMinTarget`, the target ratchet
   and the drain watchdog. `port/include/audio_pace.h` documents why.
-- `port/tests/audio_pace.c` — 16 cases, including the two hardware-only bugs and
+- `port/tests/audio_pace.c` — 22 cases, including the two hardware-only bugs,
   single-digit frame rates down to 1 fps.
 - `src/audi.c:336-360` — `amCreateAudioManager`, `g_FrameSize = 736`.
 - `src/audi.c:529` — the vanilla buffer-feedback frame sizing that the port lost.

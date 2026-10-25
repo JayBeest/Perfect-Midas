@@ -688,6 +688,171 @@ static void test_simulation_survives_a_stall_between_pumps(void)
     CHECK(queued <= TARGET + ALIGN * BYTES_PER_SAMPLE);
 }
 
+/* ---- a jittered pump interval ------------------------------------------ */
+
+/*
+ * The simulations above all pump at a CONSTANT interval, which is why none of
+ * them ever caught this: the pump measures the interval that just elapsed and
+ * sizes the queue to it, so a perfectly even pump interval can never starve - it
+ * refills for exactly the interval it just lost. A real session's intervals
+ * vary, and the gap is only visible when one interval is longer than the one
+ * before it.
+ *
+ * This drives `base_ms` pumps with every `spike_every`-th taking `spike_ms`,
+ * against the same device model as simulate(). `use_effective` selects how the
+ * target combines the interval floor with the ratchet:
+ *
+ *   0  max(floor, ratcheted)                  - the pump before this change
+ *   1  portAudioPaceEffectiveTarget(...)      - floor + what the ratchet learned
+ *
+ * The ratchet itself is stepped identically in both, so the only difference is
+ * whether the headroom it learns can reach the queue.
+ */
+static void simulate_jitter(unsigned base_ms, unsigned spike_every, unsigned spike_ms,
+                            unsigned seconds, int use_effective, SimResult *out)
+{
+    PortAudioPaceClock c;
+    PortAudioPaceTarget t = {0, 0};
+    PortAudioPaceDrain d = {0, 0, 0, 0};
+    long long consumed_acc = 0;
+    unsigned queued = TARGET;
+    unsigned pumps = (seconds * 1000u) / base_ms;
+    unsigned i;
+    int primed = 0;
+
+    portAudioPaceClockReset(&c);
+    out->min_bytes = 0xFFFFFFFFu;
+    out->max_bytes = 0;
+    out->dry = 0;
+    out->rendered = 0;
+    out->consumed = 0;
+    (void) d;
+
+    for (i = 0; i < pumps; i++) {
+        unsigned pump_ms = (((i + 1) % spike_every) == 0) ? spike_ms : base_ms;
+        unsigned opened;
+        unsigned ran_dry;
+        unsigned floor_bytes;
+        unsigned target_eff;
+        unsigned cap_eff;
+
+        /* The interval that just elapsed drains the queue BEFORE the pump gets
+         * a chance to refill - that is what makes an interval longer than the
+         * one before it starve. Sizing and draining the same interval (which is
+         * what the constant-rate simulations do) can never miss. */
+        consumed_acc += (long long) pump_ms * (long long) RATE;
+        while (consumed_acc >= 1000) {
+            unsigned long long take = (unsigned long long) (consumed_acc / 1000);
+
+            consumed_acc -= (long long) take * 1000;
+            if (take > queued / BYTES_PER_SAMPLE) {
+                take = queued / BYTES_PER_SAMPLE;
+            }
+            queued -= (unsigned) (take * BYTES_PER_SAMPLE);
+            out->consumed += (long long) take;
+        }
+
+        opened = queued;
+        ran_dry = (primed && opened == 0) ? 1u : 0u;
+        if (ran_dry) {
+            out->dry++;
+        }
+
+        /* The pump learns from this interval and refills for the next one. */
+        floor_bytes = portAudioPaceMinTarget(pump_ms, &cfg);
+        if (use_effective) {
+            target_eff = portAudioPaceEffectiveTarget(floor_bytes, t.target, &cfg);
+        } else {
+            target_eff = (floor_bytes > t.target) ? floor_bytes : t.target;
+        }
+        /* the same ratchet advance either way, so the comparison is honest */
+        t.target = portAudioPaceTargetStep(&t, (int) ran_dry, 0, &cfg);
+
+        cap_eff = portAudioPaceCap(target_eff, &cfg);
+        while (1) {
+            unsigned n = portAudioPaceFrame(&c, pump_ms, queued, target_eff, 1, &cfg);
+            unsigned bytes;
+
+            if (n == 0) {
+                break;
+            }
+            bytes = n * BYTES_PER_SAMPLE;
+            if (queued + bytes > cap_eff) {
+                break;
+            }
+            queued += bytes;
+            out->rendered += n;
+        }
+        if (!primed && queued > 0) {
+            primed = 1;
+        }
+        if (primed) {
+            if (queued < out->min_bytes) {
+                out->min_bytes = queued;
+            }
+            if (queued > out->max_bytes) {
+                out->max_bytes = queued;
+            }
+        }
+    }
+}
+
+/* The learned headroom must survive the interval floor.
+ *
+ * This is the arithmetic the pump got wrong: at 1 fps the floor is ~870 ms of
+ * audio while the ratchet's whole ceiling is 116 ms, so max() discarded every
+ * underrun it ever learned from. */
+static void test_effective_target_adds_the_ratchet_on_top(void)
+{
+    const unsigned floor_1fps = portAudioPaceMinTarget(870u, &cfg);
+    const unsigned floor_60fps = portAudioPaceMinTarget(17u, &cfg);
+
+    /* No underruns learned: ordinary frame rates are unchanged. */
+    CHECK(portAudioPaceEffectiveTarget(floor_60fps, TARGET, &cfg) == TARGET);
+    CHECK(portAudioPaceEffectiveTarget(floor_1fps, TARGET, &cfg) == floor_1fps);
+
+    /* Saturated ratchet: the headroom is ADDED where the floor dominates. */
+    CHECK(portAudioPaceEffectiveTarget(floor_1fps, TARGET_MAX, &cfg)
+          == floor_1fps + (TARGET_MAX - TARGET));
+    CHECK(portAudioPaceEffectiveTarget(floor_1fps, TARGET_MAX, &cfg) > floor_1fps);
+
+    /* And at an ordinary interval, where the configured target dominates, the
+     * learned amount still applies rather than being swallowed by a max(). */
+    CHECK(portAudioPaceEffectiveTarget(0, TARGET_MAX, &cfg) == TARGET_MAX);
+    CHECK(portAudioPaceEffectiveTarget(0, TARGET, &cfg) == TARGET);
+
+    /* Absurd inputs saturate rather than wrap. */
+    CHECK(portAudioPaceEffectiveTarget(0xFFFFFFFFu, TARGET_MAX, &cfg) == 0xFFFFFFFFu);
+}
+
+/* The regression, end to end: at 1 fps with an occasional longer frame, the
+ * queue used to starve on every single spike because nothing it learned could
+ * reach the queue. With the headroom applied, the spikes eventually stop
+ * starving it. */
+static void test_jitter_at_low_frame_rate(void)
+{
+    SimResult legacy, fixed;
+
+    /* 870 ms pumps, every fifth 940 ms: a 70 ms overrun, which is ordinary
+     * frame-to-frame variance at this rate and well under the 116 ms the
+     * ratchet is allowed to learn. */
+    simulate_jitter(870u, 5u, 940u, 120u, 0, &legacy);
+    simulate_jitter(870u, 5u, 940u, 120u, 1, &fixed);
+
+    /* The defect: the ratchet is masked by the floor, so every spike starves. */
+    CHECK(legacy.dry >= 20);
+
+    /* The fix: the first spikes teach it, then the headroom covers them. */
+    CHECK(fixed.dry > 0);        /* the first spike is still a surprise */
+    CHECK(fixed.dry < legacy.dry);
+    CHECK(fixed.dry <= 8);
+
+    /* And it is bounded: the queue does not grow without limit. */
+    CHECK(fixed.max_bytes <= portAudioPaceEffectiveTarget(
+                                 portAudioPaceMinTarget(940u, &cfg), TARGET_MAX, &cfg)
+                             + MAX_FRAME * BYTES_PER_SAMPLE);
+}
+
 int main(void)
 {
     test_refill_is_aligned_and_clamped();
@@ -714,6 +879,8 @@ int main(void)
     test_interval_floor_and_cap_scale_together();
     test_simulation_at_high_frame_rate();
     test_simulation_survives_a_stall_between_pumps();
+    test_effective_target_adds_the_ratchet_on_top();
+    test_jitter_at_low_frame_rate();
 
     printf("audio_pace: all checks passed\n");
     return 0;
