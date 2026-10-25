@@ -1,6 +1,10 @@
 # The audio-pump branch: state of play
 
-Branch `audio-pump-wallclock_gen4`, base `3a1ab62`. Re-derive the commit count
+Branch `tick-field-accounting`, base `3a1ab62`. (It was `audio-pump-wallclock_gen4`
+while this work was done; the name described its first subject rather than its
+centre of mass. The `NEXT_AGENT*.md` handoffs still say the old name and are left
+as written, because they are dated snapshots. Same commits, same SHAs — a rename,
+not a rebase.) Re-derive the commit count
 with `git rev-list --count 3a1ab62..HEAD` — it is deliberately not written here,
 because this branch has now miscounted itself five times, twice in one day.
 

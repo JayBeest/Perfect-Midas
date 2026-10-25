@@ -1,6 +1,7 @@
 # Audio-pump branch — third-pass audit
 
-Branch `audio-pump-wallclock_gen4`, base `3a1ab62`, tip `2f8a6d0` (7 commits).
+Branch `tick-field-accounting` (then `audio-pump-wallclock_gen4`), base
+`3a1ab62`, tip `2f8a6d0` (7 commits).
 Report-only pass: no tracked file was edited, staged or committed. The only
 writes were `Data/Logs/`, `/tmp/`, and the `midas.ini` backup/restore cycle in
 §5 of the handoff, which closed clean: the user's ini is byte-identical to how
