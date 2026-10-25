@@ -3,8 +3,10 @@
 Branch `tick-field-accounting`, base `3a1ab62`. (It was `audio-pump-wallclock_gen4`
 while this work was done; the name described its first subject rather than its
 centre of mass. The `NEXT_AGENT*.md` handoffs still say the old name and are left
-as written, because they are dated snapshots. Same commits, same SHAs — a rename,
-not a rebase.) Re-derive the commit count
+as written, because they are dated snapshots. The rename touched nothing but
+these two headers. Note that the branch's *earlier* history was amended once,
+before this pass: `tps-the-lie.md` cited two pre-rewrite SHAs that resolved to
+nothing, corrected 2026-10-25.) Re-derive the commit count
 with `git rev-list --count 3a1ab62..HEAD` — it is deliberately not written here,
 because this branch has now miscounted itself five times, twice in one day.
 
@@ -24,11 +26,11 @@ and why.
 
 ---
 
-## The commits, in five phases
+## The commits, in six phases
 
 Read them as these units rather than serially. Every commit through `af78f4a`
 builds clean and passes `ctest` 9/9 on its own — measured, not assumed (see
-below). The commits after it are documentation amendments to these pages.
+below).
 
 **A. The four numbers** (`ca41f25`, `97659f6`, `85fa9f1`) — the tick and field
 rate maths as pure functions, `fields/s` published, the block showing
@@ -49,8 +51,11 @@ measurement, and record the audit itself.
 **E. What that work exposed** (`ef16465`, `df881c9`, `f04d421`, `af78f4a`) —
 the state-of-play page, the pump's underrun ratchet defect found while checking
 an audio complaint, the harnesses made durable, and a documentation sweep.
-Subsequent commits are documentation amendments to this page and to
-`NEXT_AGENT_V4.md`; `git log` lists them and they carry no code.
+
+**F. The pass after it** (`13fedc5`, `7b99f9c`, `e06105f`) — the audio
+simulation put in the pump's order and given jitter (the largest test change on
+the branch), the two missing documents resolved, and the branch renamed. Two of
+these three carry code; do not read "documentation" into a phase tag.
 
 Phase C is the interesting one for a reader: it contains the branch's own
 retraction, and the commits in it that supersede earlier ones are the strongest
@@ -211,7 +216,7 @@ D5 was about.**
 
 ### Also closed
 
-- **Audit §8.2** — `credit N of M` and `pacer asked N` now have shipped text:
+- **`NEXT_AGENT_V3.md` §8.2** — `credit N of M` and `pacer asked N` now have shipped text:
   `tools/console_help.txt`, section THE HITCH LINE. They were the branch's only
   per-frame evidence of time loss and had no user-facing documentation at all.
 - **`tools/midas_ini_help.txt`** — the `tickhz` row said a stale number "is
@@ -233,7 +238,7 @@ D5 was about.**
 | D5 stall cap truncates a deliberate hw hold | major | fixed, `17bf80b` |
 | D6 `f/s` read a healthy 60.0 during every pause | — | fixed |
 | D7 the D4 guard could still publish a negative | — | fixed |
-| §8.2 `credit` undocumented where a user would see it | minor | fixed, `17bf80b` |
+| `NEXT_AGENT_V3.md` §8.2 `credit` undocumented where a user would see it | minor | fixed, `17bf80b` |
 | Audio pump queue has almost no headroom above one frame | — | **reported, not fixed** |
 | F3-A's first cut was order-dependent | — | caught before commit, recorded |
 

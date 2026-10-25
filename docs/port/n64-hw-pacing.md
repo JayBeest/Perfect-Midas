@@ -68,10 +68,18 @@ ms = c0 + c1*fill2/1e3 + c2*fill1/1e3 + c3*fillx/1e3 + c4*fillr/1e3
 | `fill1` | 0.000000 | triangle pixels drawn 1-cycle — **fitted to zero** |
 | `fillx` | 0.050997 µs/px | triangle pixels with `ZMODE_XLU`, counted *in addition* to fill1/fill2 (`gfx_pc.cpp`) |
 | `fillr` | 0.049921 µs/px | rectangle (fill-rect) pixels |
-| `loads` | 0.000000 | TMEM loads — **fitted to zero** |
+| `loads` | 0.000000 ms/load | TMEM loads — **fitted to zero** |
 | `lbytes` | 0.028149 µs/byte | TMEM load bytes |
-| `tris` | 0.004372 µs/tri | triangles |
-| `chrs` | 0.152045 µs/char | characters simulated this tick (`g_PortHwChrsTicked`) |
+| `tris` | 4.372 µs/tri (0.004372 **ms**) | triangles |
+| `chrs` | 152.0 µs/char (0.152045 **ms**) | characters simulated this tick (`g_PortHwChrsTicked`) |
+
+**Two unit conventions in one formula, which is a trap.** The fill and byte terms
+carry a `* 0.001f` on the *count*, so their coefficients read directly as µs per
+unit. The last two do not — `sHwModel[7] * tris` and `sHwModel[8] * chrs` are
+multiplied by the raw count, so their coefficients are **milliseconds** per unit.
+Read as µs they look 1000× too cheap, which is what a first draft of this table
+did: 0.004372 µs/tri would make the whole triangle term 4.4 ns each and vanish.
+Whenever a coefficient here is quoted, quote its unit with it.
 
 Two zero coefficients are not missing terms: the fit decided 1-cycle triangle
 pixels and TMEM load counts carry no weight beyond the other columns. Anything
@@ -100,8 +108,9 @@ yields to (§5.2 of the design record, D5).
 
 The console loads in-frame: a weapon swap, a guard's body or a room coming into
 view DMAs compressed bytes off the cart and inflates them on the CPU, so that
-frame runs long. `tickhz=hw` charges it too. Each load site notes its
-**compressed** size — `ob.c` file loads and room bytes, `image.c` texture loads,
+frame runs long. `tickhz=hw` charges it too. Each load site notes the number of
+ROM bytes it read (uncompressed reads charge the cart DMA alone: `compressed`
+is 0 for those) — `ob.c` file loads and room bytes, `image.c` texture loads,
 `objecthandler_2.c` model textures for private-pool loads (the hands, which the
 N64 re-inflates on every swap) — and the next frame's hold adds the time.
 

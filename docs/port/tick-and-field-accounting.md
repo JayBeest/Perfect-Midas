@@ -484,7 +484,7 @@ site —
 third-pass audit, `docs/port/audio-pump-audit-pass3.md` F1). The model's figure
 is renamed `pacer asked N` so it is not read as a baseline for the credit.
 `tools/console_help.txt` now documents both fields for the first time
-(audit §8.2): `credit` was the branch's only per-frame evidence of the loss and
+(`NEXT_AGENT_V3.md` §8.2): `credit` was the branch's only per-frame evidence of the loss and
 had no shipped text at all.
 
 ### 5.3 Two defects in the fix itself, found by review

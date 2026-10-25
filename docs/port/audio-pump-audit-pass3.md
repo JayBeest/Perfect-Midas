@@ -82,12 +82,20 @@ ge: hitch: 9190.3 ms frame (stage 33, …) | sim: … pacer 8736.3 ms,
 ```
 
 **Why** — `fld` is the `g_PortFieldsTicked` delta since the previous *present*
-(`hitchlog.c:221`), which is clamped by `GE_TICKMAXSTEP` = 8 fields
-(`src/game/frametiming.c:1178-1183`). `model held` is the render model's price
-for drawing work (`frametiming.c:962-970`), published when the pacer prices a
+(`portHitchFrame`, `hitchlog.c`), which is clamped by `GE_TICKMAXSTEP` = 8 fields
+(the stall cap in `waitForNextFrame`; it asks `portTickCreditCap()` now, see D5).
+`model held` is the render model's price
+for drawing work (`portHwPredictMs`, read in `portHwPaceFields`), published when
+the pacer prices a
 frame. When the renderer is the bottleneck, the frame's wall span is far longer
 than either number. The two are comparable only when the machine presents at
 the modelled rate — exactly the case where the audit is not needed.
+
+> **The line numbers this paragraph used to give were wrong on arrival.** It
+> cited `frametiming.c:1178-1183` for the cap and `:962-970` for the model, which
+> matched the tree the audit examined (`2f8a6d0`) and stopped matching when
+> `cb98c39` added 41 lines above them. Replaced with symbols, per the citation
+> policy in `audio-pump-state-of-play.md` §5.
 
 **What is actually true** — `model held` is a floor on how long the pacer
 waited, not a prediction of wall time; comparing it to the credit delta measures
@@ -425,6 +433,12 @@ setup, and the branch's own §5.2 measured the same thing.
 
 ## 5. Verdict
 
+> **This verdict is a dated snapshot and has since been discharged.** It was
+> written against `2f8a6d0`. Both blockers it names were fixed — F1 by `cb98c39`,
+> F3 by `87af349` — and §6 records the post-fix numbers. Read this section for the
+> reasoning, not for the branch's current state. Kept verbatim because a verdict
+> that gets rewritten once it comes true is not a verdict.
+
 **Not safe to push as-is — two majors block it, and they are both documentation of
 behaviour rather than arithmetic.** The branch's numerical core is sound: the
 pure functions are tested, `maxfps 30` reproduces the manual's explicit claim
@@ -525,9 +539,9 @@ correct hw session at the model's 30-field ceiling is not; the 30-field
 boundary is covered by the unit test only. Audit §2's hardware items stay
 unverified.
 
-Also closed here: audit §8.2's gap. `credit N of M` and `pacer asked N` now
-have a shipped explanation — `tools/console_help.txt`, section THE HITCH LINE,
-including which of the two to read before blaming the cap.
+Also closed here: the gap `NEXT_AGENT_V3.md` §8.2 recorded. `credit N of M` and
+`pacer asked N` now have a shipped explanation — `tools/console_help.txt`, section
+THE HITCH LINE, including which of the two to read before blaming the cap.
 
 ### F3's code half — resolved (`NEXT_AGENT_V3.md` Task A)
 

@@ -225,8 +225,14 @@ Four numbers, each with one meaning:
 
 `TPS` is redundant against the new pair — it is effectively `min(tk, fields/s)`, which is
 `tk` when each tick clears a field and the field rate otherwise — so it adds no
-information. It was removed from the overlay in `ecfbe07` and from the log line
-and its legend in `853163b` (`port/src/audio_pc.c`, `portAudioLogLine`).
+information. It was removed from the overlay in `85fa9f1` and from the log line
+and its legend in `2f8a6d0` (`port/src/audio_pc.c`, `portAudioLogLine`).
+
+> **These two SHAs were wrong until 2026-10-25.** They read `ecfbe07` and
+> `853163b`, which are pre-rewrite twins of those commits — same subjects, same
+> file sets, different trees — left behind when the branch's early history was
+> amended, and reachable from nothing on it. A reader following the citation got
+> "unknown revision". Corrected to the commits that are actually in the branch.
 
 Nothing in the branch prints it any more. At the tip of the branch the log line
 reads:
@@ -296,7 +302,7 @@ The screenshots are untracked and are the user's; they are cited, not committed.
 - **Manual entry** — gone, replaced by `FPS` / `TK` / `f/s` / `f/t` field
   documentation. Fixed.
 - **Log legend and log line** — legend rewritten, `TPS` removed from the line,
-  in `853163b`. Fixed.
+  in `2f8a6d0`. Fixed.
 - **`gfx_sdl2.cpp` comment** — replaced by a WARNING block that says what the
   counter is. Fixed.
 - **`lv.c` comment** — still live, still false below 60 fps. Known, recorded,

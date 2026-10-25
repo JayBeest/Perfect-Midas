@@ -493,7 +493,15 @@ holding an unbounded backlog.
 
 ---
 
-## Appendix — line references (in the shipped tree)
+## Appendix — line references (dated; they have drifted)
+
+**Read these as of the generation each section describes, not as of the current
+tree.** Every line number below was correct when written and most are now
+hundreds of lines short, because `port/src/audio_pc.c` has been edited since by
+this branch and the branches before it. A spot check at `ef8a6c6`: the pacing
+config is at 79-117, `portAcmdValidate` at 465, `portAudioHealth` at 1006,
+`portAudioFieldSamples` at 1243 and `portAudioPump` at 1258. The symbols are the
+stable reference; the numbers are kept because they locate the generation.
 
 - `port/src/audio_pc.c:79-104` — pacing config (`RATE`, `TARGET_MS`,
   `TARGET`, `TARGET_MAX`, `CATCHUP_MS`, `DRAIN_MS`, `DEV_PERIOD_MS`).
