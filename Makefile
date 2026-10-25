@@ -255,7 +255,7 @@ OBJCOPY := $(TOOLCHAIN)objcopy
 .NOTPARALLEL: print_info create_directories $(APPROM) checksum
 
 # Phony Recipes - These targets are not files, Get Make to do something
-.PHONY: print_info create_directories build_tools prerequisites checksum all_p1 all default commonclean setupclean stanclean dataclean libultraclean codeclean clean nuke help cmdbuidler test port_test audio_test demo context extractassets forceextractassets textures convert_props convert_chrs convert_guns extract_u extract_e extract_j force_extract_u force_extract_e force_extract_j extract_rsp
+.PHONY: print_info create_directories build_tools prerequisites checksum all_p1 all default commonclean setupclean stanclean dataclean libultraclean codeclean clean nuke help cmdbuidler test port_test audio_test docs_check demo context extractassets forceextractassets textures convert_props convert_chrs convert_guns extract_u extract_e extract_j force_extract_u force_extract_e force_extract_j extract_rsp
 
 
 # this file references variables defined above: BUILD_DIR, CFLAGWARNING, INCLUDE, LCDEFS
@@ -443,12 +443,18 @@ test: checksum
 #
 #   make port_test    all ten tests
 #   make audio_test   the audio, tick and layout four
+#   make docs_check   the documentation tier: public docs tracked, private ignored
 #   make demo         tests, then the game with diagnostics on, windowed
 port_test:
 	@./scripts/port/port_test.sh --no-game
 
 audio_test:
 	@./scripts/port/port_test.sh --audio --no-game
+
+# Not part of the ctest suite: it reads the git index, not the built code, and
+# CI ignores *.md changes. See the script's header for what it checks.
+docs_check:
+	@./scripts/port/check_docs_tier.sh
 
 demo:
 	@./scripts/port/port_test.sh -v
