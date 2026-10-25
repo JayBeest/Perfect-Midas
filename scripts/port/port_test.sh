@@ -80,6 +80,22 @@ fail=0
 
 if [ "$run_tests" -eq 1 ]; then
     echo "Project Midas - port test suite"
+    # WHICH CODE DID THIS RUN TEST? A green suite is only worth something if the
+    # tree it tested is the tree you think it is. That was not obvious once: a
+    # stash left the working copy at HEAD while the session believed it was
+    # testing its own changes, and every test passed on the wrong code. Printing
+    # the commit, and shouting when the tree is dirty, makes the question
+    # unaskable without costing a line of output.
+    {
+        _sha=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo '?')
+        _br=$(git -C "$ROOT" branch --show-current 2>/dev/null)
+        _dirty=$(git -C "$ROOT" status --porcelain --untracked-files=no 2>/dev/null | wc -l | tr -d ' ')
+        if [ "${_dirty:-0}" -eq 0 ]; then
+            echo "  testing: $_br @ $_sha (clean)"
+        else
+            echo "  testing: $_br @ $_sha + $_dirty uncommitted file(s) - NOT the commit above"
+        fi
+    }
     echo
 
     # Build, but never reconfigure: build_macos is the developer's own build
