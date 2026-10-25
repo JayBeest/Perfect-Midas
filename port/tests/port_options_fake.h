@@ -45,4 +45,8 @@ void fakeAcceptInput(const char *key); /* make this [input] row settable */
  * sets n64_aa, 0 = the preset leaves the bit alone. */
 void fakeClassicAaPart(int on);
 
+/* classic_pure: 1 (the default) = every part applies and the part rows are
+ * ignored, 0 = custom. Any part-row change turns it off. */
+void fakeClassicPure(int on);
+
 #endif /* PORT_OPTIONS_FAKE_H */

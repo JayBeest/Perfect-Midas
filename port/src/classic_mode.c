@@ -23,6 +23,17 @@ static int clampN(int n)
     return (n > CLASSIC_MODE_MAX) ? CLASSIC_MODE_MAX : n;
 }
 
+int portClassicPartApplies(int pure, unsigned mask, int i)
+{
+    if (i < 0 || i >= 32) {
+        return 0;
+    }
+    if (pure) {
+        return 1;   /* all parts, whatever the rows say */
+    }
+    return (int) ((mask >> i) & 1u);
+}
+
 void portClassicPlan(const ClassicInput *in, ClassicPlan *out)
 {
     int n;
@@ -45,10 +56,17 @@ void portClassicPlan(const ClassicInput *in, ClassicPlan *out)
         return;
     }
 
-    /* Remembering happens only when entering the mode. FIX never snapshots, and
-     * leaving the mode has nothing to remember - its job is to give back what a
-     * previous entry stored. */
-    if (in->op == CLASSIC_OP_TOGGLE_ON && in->mode_on) {
+    /* Remembering happens when entering the mode, and only while nothing is
+     * remembered yet. FIX never snapshots, and leaving the mode has nothing to
+     * remember - its job is to give back what a previous entry stored.
+     *
+     * WHY "only while nothing is remembered": the snapshot means "the values the
+     * player chose". port_options.c keeps it true while the mode is OFF - any
+     * change to an owned setting updates it - so overwriting it here would
+     * replace a real choice with whatever the mode left behind. That was the
+     * defect: booting `-classic` and pressing Tab restored the mode's own
+     * maxfps=-1, so the frame-rate half of the toggle did nothing at all. */
+    if (in->op == CLASSIC_OP_TOGGLE_ON && in->mode_on && in->saved_n == 0) {
         out->snapshot = 1;
         for (i = 0; i < n; i++) {
             out->saved[i] = in->current[i];

@@ -13,6 +13,7 @@
 #include <ultra64.h>
 #include "port_options.h"
 #include "boot_flags.h"   /* the -n64_aa / -audio_pump / -audio_log parse */
+#include "classic_mode.h"  /* portClassicPartApplies: the pure-vs-custom rule */
 #include "classic_split.h" /* the one-time n64_aa -> classic_mode migration */
 #include "video_env.h"     /* the env overrides that can contradict a mode */
 
@@ -1002,6 +1003,20 @@ static const char *const s_ClassicPartKeys[] = {
 #define CLASSIC_PART_N64AA 10
 static int s_CfgClassicParts = (1 << CLASSIC_PART_COUNT) - 1;
 
+/* [display] classic_pure: 1 = Classic Mode runs with EVERY part on and the
+ * CLASSIC sheet's rows are ignored; 0 = custom, the rows decide. Default 1,
+ * because "Classic Mode" should mean the whole thing until the player says
+ * otherwise - and because a toggle that only half-applies is the defect this
+ * closes.
+ *
+ * PURE OVERRIDES THE ROWS, IT DOES NOT WRITE THEM. Turning the mode on under
+ * pure leaves the player's custom selection stored underneath, so switching
+ * pure off later reveals their own choices rather than eleven forced Ons. The
+ * cost is that a row changed while pure is on would have no visible effect,
+ * which is why changing any part row turns pure off - choosing a part IS
+ * choosing custom. */
+static int s_CfgClassicPure = 1;
+
 static int videoClassicPartIndex(const char *key)
 {
     int i;
@@ -1019,7 +1034,20 @@ static int videoClassicPartIndex(const char *key)
 /** 1 = Classic Mode applies part `i` (port_options.c, frametiming.c). */
 s32 portClassicPart(s32 i)
 {
-    return (i >= 0 && i < CLASSIC_PART_COUNT) ? ((s_CfgClassicParts >> i) & 1) : 0;
+    return portClassicPartApplies(s_CfgClassicPure, (unsigned) s_CfgClassicParts, (int) i);
+}
+
+/** The part row index for `key`, or -1. port_options.c uses it to notice a part
+ *  being chosen, which is what turns pure off. */
+s32 portClassicPartIndexOf(const char *key)
+{
+    return (s32) videoClassicPartIndex(key);
+}
+
+/** 1 while the preset is PURE (all parts, rows ignored). */
+s32 portVideoClassicPureOn(void)
+{
+    return s_CfgClassicPure;
 }
 
 /* Classic Mode is on and its N64 AA part too: the VI edge blend runs at the
@@ -1102,6 +1130,40 @@ void portVideoClassicSavedSet(const s32 *v)
     portIniWriteStrs("[display]", keys, vals, 1);
 }
 
+/** Update ONE remembered field, in place.
+ *
+ * port_options.c's classicLearn uses this so tracking a player's change does
+ * not rewrite fields it knows nothing about - writing the whole array from a
+ * single changed row would fabricate the other six. Fields not yet held (an
+ * older 4-field line) are filled from the live values first, because while the
+ * mode is off the live values are the player's choices. Returns 1 if anything
+ * changed, 0 for a bad index or a value already held. */
+s32 portVideoClassicSavedPut(s32 i, s32 v)
+{
+    char buf[96];
+    const char *keys[1];
+    const char *vals[1];
+
+    if (i < 0 || i >= CLASSIC_SAVED_MAX)
+    {
+        return 0;
+    }
+    if (s_CfgClassicSavedSet == CLASSIC_SAVED_MAX && s_CfgClassicSaved[i] == v)
+    {
+        return 0;   /* already tracked */
+    }
+    s_CfgClassicSaved[i] = v;
+    s_CfgClassicSavedSet = CLASSIC_SAVED_MAX;
+    SDL_snprintf(buf, sizeof(buf), "%d,%d,%d,%d,%d,%d,%d",
+                 (int) s_CfgClassicSaved[0], (int) s_CfgClassicSaved[1], (int) s_CfgClassicSaved[2],
+                 (int) s_CfgClassicSaved[3], (int) s_CfgClassicSaved[4], (int) s_CfgClassicSaved[5],
+                 (int) s_CfgClassicSaved[6]);
+    keys[0] = "classic_saved";
+    vals[0] = buf;
+    portIniWriteStrs("[display]", keys, vals, 1);
+    return 1;
+}
+
 /* [display] fullscreen: the 3-way display mode. Words or the legacy numbers;
  * anything unrecognised but non-zero reads as fullscreen, which is what the
  * old atoi did for every truthy value. */
@@ -1168,6 +1230,7 @@ static int videoSetDisplayOption(const char *key, const char *value)
         || SDL_strcasecmp(key, "hw_mipmaps") == 0) { s_CfgMipmaps = SDL_atoi(value) != 0; return 1; }
     if (SDL_strcasecmp(key, "n64_aa") == 0)        { s_CfgN64Aa = SDL_atoi(value) != 0; return 1; }
     if (SDL_strcasecmp(key, "classic_mode") == 0)  { s_CfgClassicMode = SDL_atoi(value) != 0; return 1; }
+    if (SDL_strcasecmp(key, "classic_pure") == 0)  { s_CfgClassicPure = SDL_atoi(value) != 0; return 1; }
     /* the one-time n64_aa -> classic_mode split marker: what it MEANS is
      * classic_split.h's decision, and videoLoadConfig is the only reader. It is
      * recognised here so an already-migrated file is not reported as an
@@ -1536,6 +1599,7 @@ s32 portVideoOptionGet(const char *key, s32 *out)
         || SDL_strcasecmp(key, "hw_mipmaps") == 0)    { *out = s_CfgMipmaps;      return 1; }
     if (SDL_strcasecmp(key, "n64_aa") == 0)        { *out = s_CfgN64Aa;        return 1; }
     if (SDL_strcasecmp(key, "classic_mode") == 0)  { *out = s_CfgClassicMode;   return 1; }
+    if (SDL_strcasecmp(key, "classic_pure") == 0)  { *out = s_CfgClassicPure;   return 1; }
     /* the CHOSEN sample count, not the effective one: n64_aa floors it at 4x
      * (videoApplyAa) and a row that silently showed 4 after you picked 2
      * would look broken. The n64 aa row above it says it needs MSAA. */
@@ -2378,6 +2442,7 @@ static void videoWriteDefaultIni(void)
     fprintf(f, "low_res=%d\n", s_CfgLowRes);
     fprintf(f, "n64_aa=%d\n", s_CfgN64Aa ? 1 : 0);
     fprintf(f, "classic_mode=%d\n", s_CfgClassicMode ? 1 : 0);
+    fprintf(f, "classic_pure=%d\n", s_CfgClassicPure ? 1 : 0);
     fprintf(f, "room_cache=%d\n", s_CfgRoomCache);
     fprintf(f, "tri_hoist=%d\n", s_CfgTriHoist ? 1 : 0);
     fprintf(f, "fix_shootthrough=%d\n", s_CfgFixShootThrough);

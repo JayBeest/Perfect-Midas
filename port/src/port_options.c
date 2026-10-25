@@ -200,6 +200,10 @@ static const struct PortOpt sOpts[] = {
      * reads. Below it sit the settings it forces, which the menus lock while it
      * is on; a row it does not own goes above it. */
     TOGGLE("classic_mode",  "[display]", "Classic Mode\n",    PORTOPT_CAT_DISPLAY),
+    /* Pure vs custom. 1 (default) = Classic Mode runs with every part, and the
+     * CLASSIC sheet's rows are ignored; 0 = custom, the rows decide. Choosing
+     * any part row turns this off, because picking a part IS choosing custom. */
+    TOGGLE("classic_pure",  "[display]", "All Parts\n",        PORTOPT_CAT_DISPLAY),
     /* The VI AA bit alone: N64-style edge blending WITHOUT the 240p preset. Its
      * own setting since the Phase 3 split - before this the key meant both, so
      * "N64 edges without the preset" was not expressible. classic_n64aa (below)
@@ -367,6 +371,8 @@ static s32 optGet(const char *key, s32 *out)
 static void classicPartChanged(const char *key, s32 on);   /* "classic mode" below */
 static void classicApplyMode(s32 on);                     /* below */
 static void classicSyncAaBit(s32 on);                     /* below */
+static void classicLearn(const char *key, s32 v);          /* below, with the tables */
+static void classicPureDemote(const char *key);             /* below */
 /* the plan adapter, defined after the mode itself ("the rule, applied") */
 static void classicInputFill(ClassicInput *in, s32 parts[CLASSIC_MODE_MAX],
                             s32 classic[CLASSIC_MODE_MAX], s32 current[CLASSIC_MODE_MAX],
@@ -413,10 +419,33 @@ static s32 optSet(const char *key, s32 v)
             classicSyncAaBit(v != 0);
             classicApplyMode(v != 0);
         }
+        else
+        {
+            classicPureDemote(key);
+            classicLearn(key, v);
+        }
         return 1;
     }
     return 0;
 }
+
+/** The snapshot must describe the PLAYER, not the mode.
+ *
+ * classic_saved exists so leaving Classic Mode can give back what was there
+ * before. Nothing used to maintain it while the mode was OFF, so it only ever
+ * held whatever an entry or a repair happened to catch - and a repair that ran
+ * while the mode was on recorded the mode's own values. That is how a file ends
+ * up with `maxfps=-1` in its "before" slot: turning the mode off then restores
+ * the thing it was supposed to undo, and Tab appears to do nothing.
+ *
+ * So: while the mode is off, any change to an owned setting IS the player's
+ * choice, and it updates the snapshot. While the mode is on, nothing is learned
+ * - those writes are the mode forcing its own values, and learning them is
+ * exactly the poisoning above.
+ *
+ * Cheap and idempotent: one lookup per row write, and the index loop only runs
+ * for the seven keys that can match.
+ */
 
 /** ENUM: list index of a value, -1 when the ini holds something off-list. */
 static s32 enumIndex(const struct PortOpt *o, s32 v)
@@ -1468,6 +1497,138 @@ const char *portClassicKey(s32 i)
 s32 portClassicVal(s32 i)
 {
     return (i >= 0 && i < PORTCLASSIC_COUNT) ? sClassicVals[i] : 0;
+}
+
+/** Teach the snapshot, so `classic_saved` always means "what the player chose".
+ *
+ * Called for every successful table write. It does nothing unless the mode is
+ * OFF: while it is on, the writes are the mode forcing its own values, and
+ * recording those is what put `maxfps=-1` in a file's "before" slot and made
+ * the Tab toggle do nothing visible for the frame rate.
+ *
+ * When nothing (or only an older 4-field line) is remembered yet, the WHOLE set
+ * is recorded from the live values - while the mode is off, the live values are
+ * by definition the player's choices, so this is exactly the snapshot that
+ * should have been taken. Otherwise only the changed field moves, which is what
+ * keeps it tracking.
+ */
+static void classicLearn(const char *key, s32 v)
+{
+    extern s32  portVideoClassicSavedGet(s32 *v) __attribute__((weak));
+    extern void portVideoClassicSavedSet(const s32 *v) __attribute__((weak));
+    extern s32  portVideoClassicSavedPut(s32 i, s32 v) __attribute__((weak));
+    const s32 mode = portOptFind("classic_mode");
+    s32 i;
+
+    if (key == NULL || sClassicHold != 0 || mode < 0 || portOptGet(mode) != 0)
+    {
+        return;   /* mode on, held, or no mode row: nothing of the player's to learn */
+    }
+    for (i = 0; i < PORTCLASSIC_COUNT; i++)
+    {
+        if (strcmp(key, sClassicKeys[i]) == 0)
+        {
+            break;
+        }
+    }
+    if (i >= PORTCLASSIC_COUNT)
+    {
+        return;   /* not one of the forced settings */
+    }
+    if (portVideoClassicSavedSet == NULL || portVideoClassicSavedGet == NULL)
+    {
+        return;
+    }
+    {
+        /* Is a COMPLETE snapshot already held? Only then is a per-field update
+         * safe. On an empty or older 4-field line, updating one field would
+         * leave the other six as whatever the array happened to hold - so the
+         * whole set is recorded from the live values instead, which is exactly
+         * right while the mode is off. */
+        s32 live[CLASSIC_MODE_MAX];
+        s32 n = portVideoClassicSavedGet(live);
+        s32 k;
+
+        if (n >= PORTCLASSIC_COUNT && portVideoClassicSavedPut != NULL)
+        {
+            portVideoClassicSavedPut(i, v);
+            return;
+        }
+        if (n >= PORTCLASSIC_COUNT)
+        {
+            live[i] = v;
+            portVideoClassicSavedSet(live);
+            return;
+        }
+        for (k = 0; k < PORTCLASSIC_COUNT; k++)
+        {
+            live[k] = portOptGet(portOptFind(sClassicKeys[k]));
+        }
+        portVideoClassicSavedSet(live);
+    }
+}
+
+/** Discard what `classic_saved` holds and record the player's CURRENT values
+ *  instead. The repair for a snapshot poisoned before classicLearn existed
+ *  (`classic_saved=0,2,0,-1,1,0,0` - a classic maxfps in the "before" slot, so
+ *  the frame rate half of the toggle does nothing).
+ *
+ *  Refused while the mode is ON, and that is the whole point: the live values
+ *  are then the mode's own, so recording them would write exactly the poison
+ *  this exists to remove. Returns 1 when the snapshot now describes the player,
+ *  0 when the mode is on (the caller says why).
+ */
+s32 portClassicRelearn(void)
+{
+    extern void portVideoClassicSavedSet(const s32 *v) __attribute__((weak));
+    const s32 mode = portOptFind("classic_mode");
+    s32 live[CLASSIC_MODE_MAX];
+    s32 i;
+
+    if (mode >= 0 && portOptGet(mode) != 0)
+    {
+        return 0;
+    }
+    if (portVideoClassicSavedSet == NULL)
+    {
+        return 0;
+    }
+    for (i = 0; i < PORTCLASSIC_COUNT; i++)
+    {
+        live[i] = portOptGet(portOptFind(sClassicKeys[i]));
+    }
+    portVideoClassicSavedSet(live);
+    return 1;
+}
+
+/** Choosing a part IS choosing custom: pure mode is "every part, rows ignored",
+ *  so a row the player just moved would otherwise appear to do nothing. Turn
+ *  pure off so the change takes effect immediately, and say so in the log -
+ *  a mode that silently stops being a mode is the defect class this branch
+ *  keeps finding.
+ *
+ *  Held surfaces (Reset All, the VIDEO sheet's Apply Changes) are exempt: they
+ *  land the whole table, including classic_pure itself, in one deliberate pass.
+ *
+ *  No log line: this file is deliberately free of the console (see the header),
+ *  and the demotion is not silent - the "All Parts" row in the menus flips to
+ *  Off in front of the player as they make the change.
+ */
+static void classicPureDemote(const char *key)
+{
+    extern s32 portClassicPartIndexOf(const char *key);   /* video.c; -1 headless */
+    extern s32 portVideoClassicPureOn(void);              /* video.c; 0 headless */
+    const s32 pure = portOptFind("classic_pure");
+
+    if (key == NULL || sClassicHold != 0 || pure < 0 || !portVideoClassicPureOn())
+    {
+        return;
+    }
+    if (portClassicPartIndexOf(key) < 0)
+    {
+        return;   /* not a part row */
+    }
+    portOptSetValueQuiet(pure, 0);
 }
 
 /* The CLASSIC sheet's rows: classic_<part> on = Classic Mode forces

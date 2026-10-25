@@ -44,6 +44,7 @@ s32 portOptFind(const char *key);
 s32 portOptSetValue(s32 i, s32 v);
 const char *portOptKey(s32 i);
 void portClassicToggle(void);
+s32 portClassicRelearn(void);
 
 #define NCLASSIC 7
 static const int sClassic[NCLASSIC] = { 240, 2, 8, -1, 2, 1, 1 };
@@ -426,6 +427,117 @@ static void the_bit_is_not_a_mismatch(void)
     CHECK(fakeGet("n64_aa") == 0);         /* and the repair left the bit alone */
 }
 
+/* ---- the snapshot must describe the PLAYER (the fps-toggle defect) ------ */
+
+/* THE bug this closes, as an assertion. `-classic` boots the mode on; pressing
+ * Tab must then restore a frame rate that is NOT the mode's own. Before
+ * classicLearn existed the snapshot was taken once and could hold the mode's
+ * value, so the frame-rate half of the toggle did nothing at all. */
+static void leaving_restores_a_non_classic_frame_rate(void)
+{
+    fakeReset();
+    set_text("classic_mode", "1");          /* the -classic path */
+    CHECK(fakeGet("maxfps") == -1);          /* the mode forced it */
+
+    set_text("classic_mode", "0");          /* Tab */
+    CHECK(fakeGet("maxfps") == 60);          /* the player's, not -1 */
+}
+
+/* The snapshot tracks choices made while the mode is OFF, so a later entry
+ * cannot record the wrong thing. */
+static void a_choice_made_while_off_is_remembered(void)
+{
+    fakeReset();
+    fakeSet("maxfps", 144);                  /* the player picks a rate */
+
+    set_text("classic_mode", "1");
+    CHECK(fakeGet("maxfps") == -1);
+
+    set_text("classic_mode", "0");
+    CHECK(fakeGet("maxfps") == 144);         /* theirs, not the default and not -1 */
+}
+
+/* And nothing is learned while the mode is ON: those writes ARE the mode. If
+ * they were learned, entering the mode would poison its own exit. */
+static void nothing_is_learned_while_the_mode_is_on(void)
+{
+    fakeReset();
+    set_text("classic_mode", "1");
+    CHECK(fakeSaved(3) == 60);               /* maxfps slot: the player's 60 */
+
+    /* force a write through the table while the mode is on */
+    fakeSet("maxfps", -1);
+    set_text("classic_mode", "1");          /* same value: no transition */
+    CHECK(fakeSaved(3) == 60);               /* still the player's */
+}
+
+/* The heal. A file whose snapshot holds the mode's own values gets it from
+ * classicLearn only after a change; this is the deliberate repair. */
+static void relearn_records_the_player_and_refuses_while_on(void)
+{
+    fakeClassicOn();                         /* mode ON, snapshot = player's */
+    CHECK(portClassicRelearn() == 0);        /* refused: live values are the mode's */
+
+    fakeReset();
+    fakeSet("maxfps", 90);                   /* the player's real rate... */
+    set_text("classic_mode", "1");
+    set_text("classic_mode", "0");
+    fakeSet("maxfps", 90);                   /* ...and it is what they have now */
+
+    CHECK(portClassicRelearn() == 1);
+    CHECK(fakeSavedN() == NCLASSIC);
+    CHECK(fakeSaved(3) == 90);
+}
+
+/* ---- pure mode --------------------------------------------------------- */
+
+/* Pure is the default: Classic Mode means every part, no matter what the rows
+ * say. The rows keep their values underneath, so switching pure off reveals
+ * what the player chose rather than eleven forced Ons. */
+static void pure_is_the_default_and_ignores_the_rows(void)
+{
+    fakeReset();
+    CHECK(fakeGet("classic_pure") == 1);
+    CHECK(fakeGet("classic_pure") == 1);
+}
+
+/* Choosing a part IS choosing custom, so pure turns itself off - otherwise the
+ * row the player just moved would appear to do nothing. */
+static void choosing_a_part_turns_pure_off(void)
+{
+    fakeReset();
+    fakeClassicPure(1);
+    CHECK(fakeGet("classic_pure") == 1);
+
+    set_text("classic_pillars", "0");
+    CHECK(fakeGet("classic_pure") == 0);     /* custom now */
+    CHECK(fakeGet("classic_pillars") == 0);
+}
+
+/* ...but only a PART row does that. A setting the mode forces is not a part. */
+static void other_keys_leave_pure_alone(void)
+{
+    fakeReset();
+    fakeClassicPure(1);
+    set_text("hud_scale", "0");
+    CHECK(fakeGet("classic_pure") == 1);
+
+    set_text("classic_mode", "1");
+    CHECK(fakeGet("classic_pure") == 1);
+}
+
+/* The hold suppresses it, so Reset All / Apply Changes - which land every row
+ * including classic_pure itself - cannot demote in the middle of their pass. */
+static void the_hold_suppresses_the_demotion(void)
+{
+    fakeReset();
+    fakeClassicPure(1);
+    portClassicSetHold(1);
+    set_text("classic_pillars", "0");
+    CHECK(fakeGet("classic_pure") == 1);
+    portClassicSetHold(0);
+}
+
 /* ---- the repair and report path (plan.md Phase 0) ---------------------- */
 
 /* The half-state the audit found: mode on, one setting drifted. Reporting it
@@ -447,6 +559,33 @@ static void repair_forces_and_remembers_nothing(void)
     expect_snapshot_is_mine();          /* the PLAYER's values, not 240/2/8/... */
     CHECK(fakeSnapshotCalls() == 0);    /* and no snapshot was taken at all */
     CHECK(fakeIniCalls() > 0);          /* and the repair is persisted */
+}
+
+/* The hand-edited case: mode ON with NOTHING remembered (a midas.ini that says
+ * classic_mode=1 and has no classic_saved). A repair here must still remember
+ * nothing - and it is the case that distinguishes FIX from TOGGLE_ON, which is
+ * what the "repair re-snapshots" mutant needs in order to be visible at all. */
+static void repair_with_nothing_remembered_still_remembers_nothing(void)
+{
+    s32 idx[8];
+    int i;
+
+    fakeReset();
+    CHECK(fakeSavedN() == 0);
+    /* a hand-edited file: the mode is on, the seven are at the classic values,
+     * and no snapshot was ever taken */
+    for (i = 0; i < NCLASSIC; i++)
+    {
+        fakeSet(sClassicKeys[i], sClassic[i]);
+    }
+    fakeSet("classic_mode", 1);          /* straight into the table: no transition */
+    fakeSet("low_res", 720);             /* drifted */
+
+    CHECK(portClassicMismatchParts(idx, 8) == 1);
+    CHECK(portClassicRepair() == 1);
+    CHECK(fakeGet("low_res") == 240);
+    CHECK(fakeSavedN() == 0);            /* nothing was remembered */
+    CHECK(fakeSnapshotCalls() == 0);
 }
 
 /* A short buffer must not be overrun: the count still reports the truth. */
@@ -503,6 +642,15 @@ int main(void)
 
     the_hold_suppresses_the_transition();
 
+    leaving_restores_a_non_classic_frame_rate();
+    a_choice_made_while_off_is_remembered();
+    nothing_is_learned_while_the_mode_is_on();
+    relearn_records_the_player_and_refuses_while_on();
+    pure_is_the_default_and_ignores_the_rows();
+    choosing_a_part_turns_pure_off();
+    other_keys_leave_pure_alone();
+    the_hold_suppresses_the_demotion();
+
     the_bit_does_not_run_the_preset();
     the_preset_moves_the_bit();
     the_part_off_leaves_the_bit_alone();
@@ -510,6 +658,7 @@ int main(void)
     the_bit_is_not_a_mismatch();
 
     repair_forces_and_remembers_nothing();
+    repair_with_nothing_remembered_still_remembers_nothing();
     mismatch_respects_the_caller_buffer();
     mismatch_is_zero_when_consistent_or_off();
 

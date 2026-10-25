@@ -81,8 +81,21 @@ echo
 
 echo "the rule (port/src/classic_mode.c)"
 MUT_SRC="$CM"
-mutate "$CM" 's/if \(in->op == CLASSIC_OP_TOGGLE_ON && in->mode_on\) \{/if (in->op == CLASSIC_OP_TOGGLE_ON) {/' "rule: drop mode_on from the snapshot test" && \
-    check "rule: snapshot ignores mode_on" kill
+mutate "$CM" 's/if \(in->op == CLASSIC_OP_TOGGLE_ON && in->mode_on && in->saved_n == 0\) \{/if (in->op == CLASSIC_OP_TOGGLE_ON \&\& in->mode_on) {/' "rule: overwrite an existing snapshot" && \
+    check "rule: entry overwrites the player's snapshot" kill
+
+mutate "$CM" 's/if \(in->op == CLASSIC_OP_TOGGLE_ON && in->mode_on && in->saved_n == 0\) \{/if (in->op == CLASSIC_OP_TOGGLE_OFF \&\& in->mode_on) {/' "rule: snapshot on the wrong op" && \
+    check "rule: snapshots when leaving" kill
+# Pure must ignore the rows; custom must honour them. Both directions, because
+# each is a different bug: a pure that reads the mask is the half-applying mode,
+# and a custom that ignores it makes the CLASSIC sheet decorative.
+mutate "$CM" 's/    if \(pure\) \{\n        return 1;   \/\* all parts, whatever the rows say \*\/\n    \}//' "pure: read the rows" && \
+    check "pure honours the rows" kill
+mutate "$CM" 's/    return \(int\) \(\(mask >> i\) & 1u\);/    return 1;/' "custom: ignore the rows" && \
+    check "custom applies every part" kill
+# An index past the table is not a yes, even in pure.
+mutate "$CM" 's/    if \(i < 0 \|\| i >= 32\) \{\n        return 0;\n    \}//' "pure: no index bound" && \
+    check "an impossible index applies a part" kill
 mutate "$CM" 's/    memset\(out, 0, sizeof\(\*out\)\);\n//' "rule: drop memset" && \
     check "rule: plan reuse keeps stale fields" kill
 mutate "$CM" 's/if \(in->parts_on == NULL \|\| in->classic == NULL \|\| in->current == NULL\) \{/if (in->parts_on == NULL) {/' "rule: trim NULL guard" && \
@@ -258,6 +271,17 @@ mutate "$PO" 's/    in->mode_on = \(mode >= 0\) \? \(portOptGet\(mode\) != 0\) :
     check "is-the-mode-on reads the AA bit" kill
 mutate "$PO" 's/\(v != 0\) != \(was != 0\)\)/1)/' "choke: always transition" && \
     check "choke point transitions on a same-value set" kill
+mutate "$PO" 's/    portOptSetValueQuiet\(pure, 0\);/    (void) 0;/' "pure: never demote" && \
+    check "choosing a part leaves pure on" kill
+mutate "$PO" 's/    if \(portClassicPartIndexOf\(key\) < 0\)\n    \{\n        return;   \/\* not a part row \*\/\n    \}/    if (0) { return; }/' "pure: demote on any key" && \
+    check "pure turns off on a setting that is not a part" kill
+mutate "$PO" 's/    if \(key == NULL \|\| sClassicHold != 0 \|\| pure < 0 \|\| !portVideoClassicPureOn\(\)\)/    if (key == NULL || pure < 0 || !portVideoClassicPureOn())/' "pure: ignore the hold" && \
+    check "pure demotes in the middle of a held batch" kill
+
+mutate "$PO" 's/    if \(key == NULL \|\| sClassicHold != 0 \|\| mode < 0 \|\| portOptGet\(mode\) != 0\)/    if (key == NULL || sClassicHold != 0 || mode < 0)/' "learn: record while the mode is on" && \
+    check "the mode's own values are learned as the player's" kill
+mutate "$PO" 's/    if \(mode >= 0 && portOptGet\(mode\) != 0\)\n    \{\n        return 0;\n    \}/    if (0) { return 0; }/' "relearn: run while the mode is on" && \
+    check "relearn records the mode's values as the player's" kill
 mutate "$PO" 's/const s32 transitions = \(sClassicHold == 0\) && /const s32 transitions = /' "choke: ignore the hold" && \
     check "choke point ignores the hold" kill
 mutate "$PO" 's/    in.op = CLASSIC_OP_FIX;/    in.op = CLASSIC_OP_TOGGLE_ON;/' "repair: re-snapshot" && \

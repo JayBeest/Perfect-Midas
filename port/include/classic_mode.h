@@ -50,6 +50,14 @@ typedef struct {
 } ClassicPlan;
 
 /*
+ * Which parts apply. PURE (the default) applies all of them and the CLASSIC
+ * sheet's rows are ignored; custom applies exactly the rows switched on. This is
+ * a function rather than a field test in video.c because it is a RULE - and the
+ * one that made "Classic Mode" half-apply in the field - so it gets a test.
+ */
+int portClassicPartApplies(int pure, unsigned mask, int i);
+
+/*
  * Fill `out` from `in`. Every field is written, so `out` need not be cleared.
  *
  * Only values that differ are emitted - a consistent file plans no writes; but

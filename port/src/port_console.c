@@ -479,6 +479,23 @@ static void conCmdClient(const char *name, const char *value)
                           (wrote == 1) ? "" : "s");
             return;
         }
+        if (value != NULL && (conStrEqI(value, "forget") || conStrEqI(value, "relearn")))
+        {   /* Repair a snapshot that holds the mode's own values: a file written
+             * before classicLearn kept it current has `maxfps=-1` in its "before"
+             * slot, so turning the mode off restores -1 and the frame rate half
+             * of the toggle appears dead. */
+            extern s32 portClassicRelearn(void);
+
+            if (portClassicRelearn())
+            {
+                conPrintLn(0, "cl_classic: remembered values now match what you have - the toggle restores these");
+            }
+            else
+            {
+                conPrintLn(1, "cl_classic: turn Classic Mode off first - the values now are the mode's own");
+            }
+            return;
+        }
         if (value != NULL && (conStrEqI(value, "on") || conStrEqI(value, "off")))
         {
             const s32 want = conStrEqI(value, "on") != 0;
@@ -536,7 +553,7 @@ static void conCmdClient(const char *name, const char *value)
             }
             if (value != NULL && !conStrEqI(value, "status"))
             {
-                conPrintLn(1, "usage: cl_classic [status|fix|on|off]");
+                conPrintLn(1, "usage: cl_classic [status|fix|on|off|forget]");
             }
             return;
         }

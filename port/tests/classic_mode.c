@@ -172,19 +172,26 @@ static void toggle_on_snapshots_even_when_already_classic(void)
     ClassicPlan p;
 
     allOn(parts);
-    /* Nothing to write, because nothing differs - but the snapshot must still
-     * happen: turning the mode off then has to restore these values, and
+    /* Nothing to write, because nothing differs - but the first snapshot must
+     * still happen: turning the mode off then has to restore these values, and
      * "restore nothing" would leave the mode off with no memory of them. */
     plan(CLASSIC_OP_TOGGLE_ON, 1, parts, sClassic, NULL, 0, &p);
     CHECK(p.snapshot == 1);
     CHECK(p.saved_n == NCLASSIC);
     CHECK(p.write_n == 0);
 
-    /* And with a snapshot already on the inputs, the plan is the same: whether
-     * to overwrite an existing snapshot is the CALLER's decision (the !n64_aa
-     * guard), not this function's. */
+    /* And with a snapshot already on the inputs, the plan is the SAME EXCEPT
+     * that nothing is remembered. This is a deliberate contract change: the
+     * rule now owns "never overwrite a snapshot that exists", because every
+     * caller that had that decision to make got it wrong in the same way. The
+     * snapshot means "the values the player chose"; a snapshot already present
+     * IS that, and overwriting it here writes whatever the mode left behind -
+     * which is how `maxfps=-1` ended up in a file's "before" slot and made the
+     * frame-rate half of the Tab toggle a no-op. port_options.c keeps the
+     * snapshot true while the mode is off (classicLearn), so it is always
+     * current when an entry arrives. */
     plan(CLASSIC_OP_TOGGLE_ON, 1, parts, sClassic, saved, NCLASSIC, &p);
-    CHECK(p.snapshot == 1);
+    CHECK(p.snapshot == 0);      /* the player's values are already held */
     CHECK(p.write_n == 0);
 }
 
@@ -540,6 +547,48 @@ static void writes_are_in_part_order(void)
     }
 }
 
+/* ---- pure vs custom (the half-applying-mode defect) --------------------- */
+
+/* PURE applies every part, whatever the row mask says. This is the rule that
+ * made "Classic Mode" mean something narrower than the name promises: a player
+ * with a row switched off from an earlier experiment got a mode that forced
+ * some of its settings and not others, and nothing said so. */
+static void pure_applies_every_part(void)
+{
+    unsigned mask = 0;   /* every row switched OFF */
+    int i;
+
+    for (i = 0; i < 11; i++) {
+        CHECK(portClassicPartApplies(1, mask, i) == 1);
+    }
+    /* the mask is genuinely ignored, not coincidentally empty */
+    CHECK(portClassicPartApplies(1, 0u, 7) == 1);
+    CHECK(portClassicPartApplies(0, 0u, 7) == 0);
+}
+
+/* CUSTOM applies exactly the rows switched on, and nothing else. */
+static void custom_follows_the_rows(void)
+{
+    const unsigned mask = (1u << 0) | (1u << 7);   /* res + pillars only */
+    int i;
+
+    for (i = 0; i < 11; i++) {
+        const int want = (i == 0 || i == 7) ? 1 : 0;
+
+        CHECK(portClassicPartApplies(0, mask, i) == want);
+    }
+}
+
+/* An index outside the table applies nothing, in either mode. A shift past the
+ * word would be undefined behaviour, and "pure" must not turn a bad index into
+ * a yes. */
+static void an_impossible_index_applies_nothing(void)
+{
+    CHECK(portClassicPartApplies(1, 0xFFFFFFFFu, -1) == 0);
+    CHECK(portClassicPartApplies(1, 0xFFFFFFFFu, 32) == 0);
+    CHECK(portClassicPartApplies(0, 0xFFFFFFFFu, 99) == 0);
+}
+
 int main(void)
 {
     mismatch_consistent();
@@ -568,6 +617,10 @@ int main(void)
     no_parts_does_nothing();
     degenerate_counts_are_safe();
     writes_are_in_part_order();
+
+    pure_applies_every_part();
+    custom_follows_the_rows();
+    an_impossible_index_applies_nothing();
 
     printf("classic_mode: all checks passed\n");
     return 0;

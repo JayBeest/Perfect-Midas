@@ -243,6 +243,27 @@ __attribute__((weak)) s32 portClassicSetsN64Aa(void)
     return 1;
 }
 
+/** Weak defaults: headless has no part ROWS and no pure switch, so the demotion
+ *  path in port_options.c cannot fire and nothing records a snapshot. video.c
+ *  overrides all three. */
+__attribute__((weak)) s32 portClassicPartIndexOf(const char *key)
+{
+    (void) key;
+    return -1;
+}
+
+__attribute__((weak)) s32 portVideoClassicPureOn(void)
+{
+    return 0;
+}
+
+__attribute__((weak)) s32 portVideoClassicSavedPut(s32 i, s32 v)
+{
+    (void) i;
+    (void) v;
+    return 0;
+}
+
 __attribute__((weak)) s32 portClassicHitches(void)
 {
     return 1;

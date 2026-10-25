@@ -25,6 +25,7 @@
 static const char *const sKeys[MAXKEYS] = {
     "low_res", "filtering", "anisotropy", "maxfps", "msaa", "mipmaps", "filter_2d",
     "classic_mode",
+    "classic_pure",
     "n64_aa",
     "classic_pillars",         /* a PART row: a classic_* key that is not the preset */
     "hud_scale",
@@ -41,6 +42,7 @@ static int sVal[MAXKEYS];
 static int sRefused[MAXKEYS];
 static int sInputOK[MAXKEYS];
 static int sAaPart = 1;   /* the classic_n64aa part: 1 = the preset sets the bit */
+static int sPure = 1;     /* classic_pure: 1 = every part, rows ignored */
 static int sSaved[MAXSAVED];
 static int sSavedN;
 static int sSnapshotCalls;
@@ -100,8 +102,10 @@ void fakeResetPlayerValues(void)
     sVal[fakeIndex("filter_2d")] = sMine[6];
     sVal[fakeIndex("n64_aa")] = 0;
     sVal[fakeIndex("classic_mode")] = 0;
+    sVal[fakeIndex("classic_pure")] = 1;
     sVal[fakeIndex("hud_scale")] = 1;
     sAaPart = 1;
+    sPure = 1;
 }
 
 void fakeReset(void)
@@ -117,6 +121,7 @@ void fakeClassicOn(void)
     /* BOTH keys, as the preset leaves them: classic_mode is what forces the
      * seven, n64_aa is the bit its classic_n64aa part turned on. */
     sVal[fakeIndex("classic_mode")] = 1;
+    sVal[fakeIndex("classic_pure")] = 1;
     sVal[fakeIndex("n64_aa")] = 1;
     sVal[fakeIndex("low_res")] = sClassic[0];
     sVal[fakeIndex("filtering")] = sClassic[1];
@@ -217,6 +222,9 @@ s32 portVideoOptionSet(const char *key, s32 value)
         return 0;
     }
     sVal[i] = (int) value;
+    if (strcmp(key, "classic_pure") == 0) {
+        sPure = value ? 1 : 0;   /* one setting, one static - as in video.c */
+    }
     logWrite(key, (int) value);
     return 1;
 }
@@ -273,6 +281,38 @@ void fakeClassicAaPart(int on)
     sAaPart = on ? 1 : 0;
 }
 
+/* video.c's part-row index: the eleven CLASSIC sheet keys. Needed by the
+ * demotion path, so a test can prove that choosing a part turns pure off. */
+static const char *const sPartKeys[] = {
+    "classic_res", "classic_filter", "classic_aniso", "classic_pacing", "classic_msaa",
+    "classic_mipmaps", "classic_filter2d", "classic_pillars", "classic_hitches",
+    "classic_composite", "classic_n64aa",
+};
+
+s32 portClassicPartIndexOf(const char *key)
+{
+    int i;
+
+    for (i = 0; key != NULL && i < 11; i++) {
+        if (strcmp(key, sPartKeys[i]) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/* video.c's pure switch. The fake keeps it as state so a test can watch it be
+ * turned off by a part change. */
+s32 portVideoClassicPureOn(void)
+{
+    return sPure;
+}
+
+void fakeClassicPure(int on)
+{
+    sPure = on ? 1 : 0;
+}
+
 /* Mirrors video.c's portVideoClassicSavedSet: it always stores CLASSIC_SAVED_MAX
  * (7) fields, which is why the real caller passes an array of that size
  * regardless of what the plan asked for. */
@@ -295,6 +335,22 @@ void portVideoClassicSavedSet(const s32 *v)
     }
     sSavedN = 7;
     sSnapshotCalls++;
+}
+
+/* Mirrors video.c's per-field update: moves ONE remembered value, and marks the
+ * snapshot complete. Deliberately not a snapshot event - sSnapshotCalls counts
+ * TRANSITIONS, and a learned value is not one. */
+s32 portVideoClassicSavedPut(s32 i, s32 v)
+{
+    if (i < 0 || i >= 7) {
+        return 0;
+    }
+    if (sSavedN == 7 && sSaved[i] == v) {
+        return 0;
+    }
+    sSaved[i] = v;
+    sSavedN = 7;
+    return 1;
 }
 
 s32 portIniWriteStrs(const char *section, const char *const *keys, const char *const *vals, s32 n)
