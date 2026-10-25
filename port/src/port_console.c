@@ -467,8 +467,8 @@ static void conCmdClient(const char *name, const char *value)
         extern const char *portClassicKey(s32 i);
         extern s32         portOptSetValue(s32 i, s32 v);
         extern s32         portOptGet(s32 i);
-        const s32 aa = portOptFind("n64_aa");
-        const s32 on = (aa >= 0) && portOptGet(aa) != 0;
+        const s32 mode = portOptFind("classic_mode");
+        const s32 on = (mode >= 0) && portOptGet(mode) != 0;
 
         if (value != NULL && conStrEqI(value, "fix"))
         {
@@ -483,9 +483,9 @@ static void conCmdClient(const char *name, const char *value)
         {
             const s32 want = conStrEqI(value, "on") != 0;
 
-            if (aa < 0)
+            if (mode < 0)
             {
-                portConPrintf(1, "cl_classic: no n64_aa row\n");
+                portConPrintf(1, "cl_classic: no classic_mode row\n");
                 return;
             }
             if (want == on)
@@ -497,8 +497,10 @@ static void conCmdClient(const char *name, const char *value)
             }
             /* One set. The option table's choke point applies the mode for
              * every surface, so this must not call portClassicSetLive after it -
-             * that is the double apply Phase 2 removed. */
-            portOptSetValue(aa, want);
+             * that is the double apply Phase 2 removed. It writes classic_mode,
+             * the PRESET: n64_aa is the AA bit now, and setting that would turn
+             * on edge blending and nothing else. */
+            portOptSetValue(mode, want);
             portConPrintf(1, "cl_classic = %s\n", want ? "on" : "off");
             return;
         }
