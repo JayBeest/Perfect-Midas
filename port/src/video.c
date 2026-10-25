@@ -4866,11 +4866,16 @@ s32 videoBootAudioLog(void)
     return s_BootFlags.audio_log;
 }
 
-/* Read the flags, and say what was understood. An argument that starts with '-' 
- * and matched nothing is NAMED in the log: the whole point of a boot flag is
- * that a run is self-documenting, and "-audio-pump=1" doing nothing silently is
- * the failure this branch keeps finding. Not an error - the rest of this command
- * line ignores unknown flags too. */
+/* Read the flags, and say what was understood. An argument that starts with '-'
+ * and matches nothing KNOWN is named in the log: the whole point of a boot flag
+ * is that a run is self-documenting, and a flag that does nothing silently is the
+ * failure this branch keeps finding. Not an error - the rest of this command
+ * line ignores unknown flags too.
+ *
+ * The test is portBootFlagKnown(), not a local list. The first cut re-matched
+ * the names here and reported `--rom-file=/x.n64` and `--lang=jp` as ignored -
+ * the documented spelling of two flags that work - because a hand-written list
+ * forgets the `=value` form. */
 void videoParseBootArgs(int argc, char **argv)
 {
     int i;
@@ -4881,13 +4886,15 @@ void videoParseBootArgs(int argc, char **argv)
     {
         const char *a = argv[i];
 
-        if (a != NULL && a[0] == '-' && a[1] == '\0')
+        if (a == NULL || a[0] != '-')
         {
-            continue; /* a lone "-" is a stdin convention, not a typo */
+            continue;   /* a bare word is the ROM path or a value, not a flag */
         }
-        if (a != NULL && a[0] == '-' && !portBootFlagIs(a, "n64_aa")
-            && !portBootFlagIs(a, "audio_pump") && !portBootFlagIs(a, "audio_log")
-            && !portBootFlagIs(a, "rom-file") && !portBootFlagIs(a, "lang"))
+        if (a[1] == '\0')
+        {
+            continue;   /* a lone "-" is a stdin convention, not a typo */
+        }
+        if (!portBootFlagKnown(a))
         {
             portConLogf("ge: video: ignoring argument '%s' (not a boot flag)\n", a);
         }
@@ -4919,9 +4926,25 @@ static void videoApplyBootArgs(void)
 
     if (videoBootClassicWanted())
     {
+        extern char *getenv(const char *);
+
         portClassicToggle();
         portConLogf("ge: video: -n64_aa -> Classic Mode on (%s)\n",
                     portVideoN64AaOn() ? "applied" : "did not apply");
+
+        /* GE_TICKHZ wins the tick rate (portTickHz reads it before everything),
+         * while Classic Mode has just set up hardware pacing - and
+         * portTickHwPace() does not look at the rate, so the hold is still
+         * priced. The result is a raised tick under a hw hold, which is not a
+         * documented mode. It is left permitted rather than refused - both knobs
+         * are diagnostics and a reader may be measuring exactly that - but it is
+         * never silent, because a mode that exists only by accident is the
+         * defect class this branch keeps finding. */
+        if (getenv("GE_TICKHZ") != NULL)
+        {
+            portConLogf("ge: video: -n64_aa with GE_TICKHZ set - the tick rate is "
+                        "GE_TICKHZ's, not hw pacing's 60, and holds are still priced.\n");
+        }
     }
     if (s_BootFlags.audio_pump)
     {
@@ -4947,9 +4970,36 @@ s32 videoInit(void)
     videoLoadConfig(); /* midas.ini (needs no SDL init - scancode names are static) */
     videoIniWritableCheck();
 
-    /* The boot flags, after the ini (they read and override it) and before the
-     * renderer is created below - Classic Mode forces msaa, which has to be in
-     * place before gfx_init. */
+    /* ENV OVERRIDES FIRST, THEN THE BOOT FLAGS. The precedence is deliberate and
+     * it is command line over environment, the usual one: the flags are the more
+     * specific request and they are what a script is written with.
+     *
+     * It also removes a half-applied mode. These two used to be applied BELOW,
+     * after videoApplyBootArgs() - so `GE_N64AA=0 -n64_aa` ran the whole Classic
+     * Mode apply (forcing low_res=240, maxfps=-1, msaa) and then cleared the flag
+     * underneath it, leaving Classic Mode's settings in force with Classic Mode
+     * reported off. Reading the env first means the flag always sees the value it
+     * is overriding. */
+    { /* [display] n64_aa: GE_N64AA=0/1 overrides the ini for A/B */
+        extern char *getenv(const char *);
+        const char *e = getenv("GE_N64AA");
+        if (e != NULL)
+        {
+            s_CfgN64Aa = (e[0] != '0');
+        }
+    }
+    { /* [display] low_res: GE_LOWRES=1/0 overrides the ini for A/B. */
+        extern char *getenv(const char *);
+        const char *e = getenv("GE_LOWRES"); /* 0 / 1 (= 240) / 240 / 480 / 720 / 1080 */
+        if (e != NULL)
+        {
+            s_CfgLowRes = videoLowResLines(e);
+        }
+    }
+
+    /* The boot flags, after the ini and after the env overrides (so they win),
+     * and before the renderer is created below - Classic Mode forces msaa, which
+     * has to be in place before gfx_init. */
     videoApplyBootArgs();
 
     { /* GE_WINDOW=WxH: override midas.ini window size (automated capture runs
@@ -5015,13 +5065,9 @@ s32 videoInit(void)
     {
         portConLogf("ge: midas.ini: msaa=%d not supported (use 1/2/4/8)\n", s_CfgMsaa);
     }
-    { /* [display] n64_aa: GE_N64AA=0/1 overrides the ini for A/B */
-        extern char *getenv(const char *);
-        const char *e = getenv("GE_N64AA");
-        if (e != NULL)
-        {
-            s_CfgN64Aa = (e[0] != '0');
-        }
+    { /* [display] n64_aa: already applied above, before the boot flags, so the
+       * flags take precedence over it. Kept here as a note, not a second read:
+       * reading it again would undo -n64_aa. */
     }
     videoApplyAa();
     if (s_CfgAnisotropy >= 2)
@@ -5029,16 +5075,9 @@ s32 videoInit(void)
         gfx_anisotropy = (s_CfgAnisotropy > 16) ? 16u : (uint32_t)s_CfgAnisotropy;
     }
     gfx_filter_2d = s_CfgFilter2D != 0;
-    { /* [display] low_res: whole-game 240p render scaled to the window (very low power machines).
-       * GE_LOWRES=1/0 overrides the ini for A/B. */
-        extern char *getenv(const char *);
-        const char *e = getenv("GE_LOWRES"); /* 0 / 1 (= 240) / 240 / 480 / 720 / 1080 */
-        if (e != NULL)
-        {
-            s_CfgLowRes = videoLowResLines(e);
-        }
-        /* gfx_low_res itself is gated per frame in videoStartFrame -
-         * levels only, never the menus */
+    { /* gfx_low_res itself is gated per frame in videoStartFrame -
+       * levels only, never the menus. GE_LOWRES was applied above, before the
+       * boot flags, so -n64_aa's forced 240 wins over it. */
     }
     { /* [display] room_cache / tri_hoist (interpreter work from the Xbox port):
        * GE_ROOMCACHE=0/1/2 and GE_TRIHOIST=0/1 override

@@ -69,3 +69,46 @@ void portBootFlagsParse(int argc, char **argv, PortBootFlags *out)
         }
     }
 }
+
+/* 1 when `arg` matches `name` followed by '=' and anything: the `--flag=value`
+ * form. Same dash and separator rules as portBootFlagIs, then a strict '='. */
+static int flagIsAssignment(const char *arg, const char *name)
+{
+    if (arg == NULL || name == NULL || arg[0] != '-') {
+        return 0;
+    }
+    while (*arg == '-') {
+        arg++;
+    }
+    while (*arg != '\0' && *name != '\0') {
+        if (lowerDash(*arg) != lowerDash(*name)) {
+            return 0;
+        }
+        arg++;
+        name++;
+    }
+    return (*name == '\0' && *arg == '=') ? 1 : 0;
+}
+
+int portBootFlagKnown(const char *arg)
+{
+    if (arg == NULL) {
+        return 0;
+    }
+
+    /* The three this file parses. */
+    if (portBootFlagIs(arg, "n64_aa") || portBootFlagIs(arg, "audio_pump")
+        || portBootFlagIs(arg, "audio_log")) {
+        return 1;
+    }
+
+    /* The two romdata.c parses: the bare flag (its value is the NEXT argument)
+     * and the `=value` form. Both are documented, and both must not be reported
+     * as unknown. */
+    if (portBootFlagIs(arg, "rom-file") || portBootFlagIs(arg, "lang")
+        || flagIsAssignment(arg, "rom-file") || flagIsAssignment(arg, "lang")) {
+        return 1;
+    }
+
+    return 0;
+}

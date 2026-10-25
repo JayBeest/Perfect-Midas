@@ -123,10 +123,18 @@ restore_ini() {
     cp "$INI_BACKUP" "$INI"
 }
 cleanup() {
+    # Kill the game first: if it is still running it can rewrite midas.ini after
+    # we restore it, and a per-case mode (windowed on display 0) would be left
+    # behind. The EXIT trap alone did not cover a signal, which is how a
+    # Ctrl-C during a case could leave a rewritten ini.
+    [ -n "${game_pid:-}" ] && kill "$game_pid" 2>/dev/null
+    pkill -f "$(basename "$GAME")" 2>/dev/null
     restore_ini
     rm -f "$INI_BACKUP"
 }
 trap cleanup EXIT
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM HUP
 
 # Per-case display mode, from the untouched ini each time.
 #
@@ -230,17 +238,33 @@ for name in ${cases//,/ }; do
     log=$(sed -n 's/^log: *//p' "$case_dir/run.out" | tail -1)
     shots=$(ls "$case_dir"/shot_*.bmp 2>/dev/null | wc -l | tr -d ' ')
 
-    classic_line=$(grep -c 'Classic Mode on (applied)' "$log" 2>/dev/null || true)
-    lowres=$(grep -m1 -o 'low_res=[0-9]*' "$log" 2>/dev/null | tail -1)
-    maxfps=$(grep -m1 -o 'maxfps=-\?[0-9]*' "$log" 2>/dev/null | tail -1)
-    fps=$(grep -o 'stats: [0-9]*fps' "$log" 2>/dev/null | tail -1 | tr -d 'stats: ')
+    # Both numbers come from the ONE config line videoInit logs, so they describe
+    # the state the renderer was created in - not some later log line that
+    # mentions maxfps.
+    cfg=$(grep -m1 'ge: video: config:' "$log" 2>/dev/null)
+    lowres=$(printf '%s' "$cfg" | sed -n 's/.*low_res=\([0-9][0-9]*\).*/low_res=\1/p')
+    mfps=$(printf '%s' "$cfg" | sed -n 's/.*maxfps=\(-\{0,1\}[0-9][0-9]*\).*/\1/p')
+    # `sed`, not `tr -d 'stats: '`: tr deletes CHARACTERS anywhere in the string,
+    # so it ate the 's' of "fps" and every summary read "60fp".
+    fps=$(grep -o 'stats: [0-9]*fps' "$log" 2>/dev/null | tail -1 | sed 's/^stats: //; s/fps$//')
     loglines=0
     [ -f "$AUDIO_LOG" ] && loglines=$(grep -c '^t=' "$AUDIO_LOG" 2>/dev/null || true)
 
     # Expectations per case. The overlay is NOT among them - see the header.
     status="ok"
     if [ "$name" = "n64_aa" ] || [ "$name" = "all" ]; then
-        [ "${classic_line:-0}" -ge 1 ] || { status="FAIL (Classic Mode not applied)"; }
+        # The header has always said this case checks low_res=240 / maxfps=-1.
+        # Until it did, a Classic Mode that logged "applied" and forced nothing
+        # passed - a comment claiming more coverage than the assertion.
+        #
+        # These two come from the config line, so they are the state the renderer
+        # was actually created in, and they are IDEMPOTENT: a second run starts
+        # already in Classic Mode (the flag writes n64_aa=1), the flag correctly
+        # does nothing, and the config line still reads 240 / -1. The first cut
+        # asserted the log SENTENCE instead and reported a false failure on every
+        # run after the first - non-idempotent against the product's own write.
+        [ "$lowres" = "low_res=240" ] || { status="FAIL (${lowres:-no low_res} in the config line)"; }
+        [ "$mfps" = "-1" ] || { status="FAIL (maxfps=${mfps:-none}, want -1)"; }
     fi
     if [ "$want_log" -eq 1 ]; then
         [ "${loglines:-0}" -ge 1 ] || { status="FAIL (no audio_pump.log lines)"; }
@@ -250,16 +274,17 @@ for name in ${cases//,/ }; do
     [ "$shots" -ge 1 ] || { status="FAIL (no capture - did it render?)"; }
     [ "$rc" -eq 0 ] || status="note (harness exit $rc)"
 
-    printf '   %-22s %s  shots=%s  classic=%s  %s %s  loglines=%s  fps=%s\n' \
-        "$status" "" "$shots" "${classic_line:-0}" "${lowres:-low_res=?}" \
-        "${maxfps:-maxfps=?}" "${loglines:-0}" "${fps:-?}"
+    printf '   %-30s %s  shots=%s  %s %s  loglines=%s  fps=%s\n' \
+        "$status" "" "$shots" "${lowres:-low_res=?}" \
+        "maxfps=${mfps:-?}" "${loglines:-0}" "${fps:-?}"
 
-    summary="${summary}${name}: ${status}; shots=${shots}; ${lowres:-low_res=?} ${maxfps:-maxfps=?}; loglines=${loglines}; display=${display}"$'\n'
+    summary="${summary}${name}: ${status}; shots=${shots}; ${lowres:-low_res=?} maxfps=${mfps:-?}; loglines=${loglines}; display=${display}"$'\n'
     rm -f "$AUDIO_LOG" 2>/dev/null
 done
 
 restore_ini
-trap - EXIT
+rm -f "$INI_BACKUP"
+trap - EXIT INT TERM HUP
 
 now_md5=$(md5 -q "$INI" 2>/dev/null || md5sum "$INI" | cut -d' ' -f1)
 echo

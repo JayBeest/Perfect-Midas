@@ -179,6 +179,40 @@ static void parse_clears_previous_state(void)
     CHECK(f.n64_aa == 0 && f.audio_pump == 0 && f.audio_log == 0);
 }
 
+/* The known-flag test the logging uses. Its whole purpose is that it cannot
+ * drift from the documented spellings, so the cases are the spellings that
+ * appear in CLI.md. */
+static void known_flags(void)
+{
+    /* the three this file parses */
+    CHECK(portBootFlagKnown("-n64_aa"));
+    CHECK(portBootFlagKnown("--n64_aa"));
+    CHECK(portBootFlagKnown("-audio_pump"));
+    CHECK(portBootFlagKnown("-audio_pump"));
+    CHECK(portBootFlagKnown("-audio_log"));
+
+    /* the two romdata.c parses, both spellings each. `=value` is the form the
+     * first cut of the log reported as UNKNOWN for two working flags. */
+    CHECK(portBootFlagKnown("--rom-file"));
+    CHECK(portBootFlagKnown("--rom-file=/tmp/x.n64"));
+    CHECK(portBootFlagKnown("-rom-file=/tmp/x.n64"));
+    CHECK(portBootFlagKnown("--lang"));
+    CHECK(portBootFlagKnown("--lang=jp"));
+    CHECK(portBootFlagKnown("-lang=j"));
+
+    /* unknown, and must stay unknown so the report is worth reading */
+    CHECK(!portBootFlagKnown("-audio"));
+    CHECK(!portBootFlagKnown("-audio_pumped"));
+    CHECK(!portBootFlagKnown("--rom"));
+    CHECK(!portBootFlagKnown("--langs=jp"));
+    CHECK(!portBootFlagKnown("-n64_aa=1"));   /* not acted on, and not known */
+    CHECK(!portBootFlagKnown("audio_pump"));   /* bare word: the ROM path slot */
+    CHECK(!portBootFlagKnown("-"));
+    CHECK(!portBootFlagKnown("--"));
+    CHECK(!portBootFlagKnown(""));
+    CHECK(!portBootFlagKnown(NULL));
+}
+
 int main(void)
 {
     no_flags();
@@ -190,6 +224,7 @@ int main(void)
     unknown_and_prefix();
     beside_a_rom_path();
     parse_clears_previous_state();
+    known_flags();
 
     printf("boot_flags: all checks passed\n");
     return 0;

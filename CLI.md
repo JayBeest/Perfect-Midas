@@ -178,11 +178,27 @@ bare first argument is the drag-and-drop ROM path and must not be eaten.
 **`-n64_aa` writes `midas.ini`**, exactly as pressing Tab does, so the mode
 persists after you quit. Add `GE_NOINISAVE=1` for a run that must leave your file
 alone; the parts still apply for that session. It is idempotent — launching twice
-with the flag does not overwrite the saved pre-Classic-Mode values a second time.
+with the flag does not overwrite the saved pre-Classic-Mode values a second time,
+and the second launch leaves the file byte-identical.
+
+**Precedence: command line beats environment.** The `GE_*` overrides are applied
+*before* these flags, so an explicit flag wins. Two combinations are worth
+knowing:
+
+- **`GE_N64AA=0 -n64_aa`** — Classic Mode is ON, fully applied (`low_res=240`,
+  `maxfps=-1`, MSAA 2×). The flag wins. This combination used to leave Classic
+  Mode's settings forced with the mode reported *off*, because `GE_N64AA` was read
+  after the flag; it is why the env pass now runs first.
+- **`GE_TICKHZ=120 -n64_aa`** — permitted, but it is not a documented mode:
+  `GE_TICKHZ` wins the tick rate while hardware pacing still prices its holds, so
+  the sim ticks at 120 Hz under a hold sized for 60. The run says so in its log
+  rather than doing it silently. Do not use both unless you are measuring exactly
+  that.
 
 Unknown flags are ignored rather than rejected, and any argument starting with `-`
-that matches nothing is named in the log (`ignoring argument '-foo'`). There is
-**no** `--help` and no `--version`.
+that matches nothing known is named in the log (`ignoring argument '-foo'`). The
+`=value` forms of the ROM and language flags (`--rom-file=…`, `--lang=jp`) are
+known, not ignored. There is **no** `--help` and no `--version`.
 
 ### 3.3 Why the pump block needed a flag at all
 
@@ -421,3 +437,14 @@ logo screens (captures differ from `baseline` exactly by the block), and that
 The `GE_WINDOW` correction in §7.1 and the software-renderer note in §7.2 come
 from the same session: the first was wrong when this file was written, and the
 second cost a round of confusion before the renderer line explained it.
+
+**Corrected after review, same day.** A verification pass over those three
+commits found six defects, all now fixed: the `ignoring argument` report called
+the documented `--rom-file=…` and `--lang=…` forms unknown (a hand-written name
+list that forgot `=value`); `GE_N64AA=0` defeated `-n64_aa` *after* it had applied
+Classic Mode, leaving a half-applied mode (§3.2 now states the precedence); the
+`GE_TICKHZ` combination was silent; the harness's `n64_aa` case asserted a log
+sentence instead of the resulting config line, so a Classic Mode that forced
+nothing still passed; that same assertion made the harness fail on every run
+after the first, because `-n64_aa` persists; and `tr -d 'stats: '` ate the `s` of
+`fps` in every summary. The fixes are verified live, not by reading.

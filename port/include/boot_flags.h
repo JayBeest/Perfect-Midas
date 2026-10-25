@@ -52,4 +52,17 @@ void portBootFlagsParse(int argc, char **argv, PortBootFlags *out);
  */
 int portBootFlagIs(const char *arg, const char *name);
 
+/*
+ * 1 when `arg` is a flag this program KNOWS, whether or not portBootFlagsParse
+ * acts on it: the three above, plus `rom-file` and `lang` with their `=value`
+ * forms, which romdata.c parses.
+ *
+ * Exists so the "ignoring argument" report cannot drift from the parse. The
+ * first cut of that report matched the names itself and quietly reported
+ * `--rom-file=/x.n64` and `--lang=jp` as ignored - the documented spelling of
+ * two flags that work - because a hand-written name list forgets the `=value`
+ * form the moment it is written. One function, used by both.
+ */
+int portBootFlagKnown(const char *arg);
+
 #endif /* PORT_BOOT_FLAGS_H */
