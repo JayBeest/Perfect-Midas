@@ -4391,6 +4391,7 @@ extern s32 portOptSetIndex(s32 i, s32 idx);
 extern void portOptStep(s32 i, s32 dir);
 extern s32 portOptIsRanged(s32 i);
 extern void portOptSaveHold(s32 on);
+extern void portClassicSetHold(s32 on);   /* the mode's own hold: see portSheetApply */
 extern s32 portOptAvailable(s32 i);
 extern s32 portVideoResCount(void);
 extern s32 portVideoResGet(s32 i, s32 *w, s32 *h);
@@ -6033,6 +6034,13 @@ static void portSheetApply(void)
     }
 
     portSheetClassicSnapshot();   /* before anything lands: the values being replaced */
+    /* The sheet lands its own plan: portSheetClassicPreset/Revert pended the
+     * classic values as red picks when the player chose the mode, and this loop
+     * commits them. The choke point must stand down, or n64_aa landing mid-loop
+     * would apply the mode on its own and the pended values would then land on
+     * top of it - correct only by luck, and only while the row order happens to
+     * favour it. This is the mechanism that makes that question unaskable. */
+    portClassicSetHold(1);
     for (r = 0; r < port_sheet_rows; r++)
     {
         if (port_sheet_pending[r] >= 0 && port_sheet_row_kind[r] == SHROW_OPT)
@@ -6047,6 +6055,7 @@ static void portSheetApply(void)
             portOptSetValue(portOptFind(portClassicKey(i)), classicRaw[i]);
         }
     }
+    portClassicSetHold(0);
     if (haveRes)
     {
         const s32 n = portVideoResCount();

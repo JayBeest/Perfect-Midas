@@ -4908,11 +4908,12 @@ void videoParseBootArgs(int argc, char **argv)
  * -n64_aa goes through portClassicToggle(), the same entry point as Tab, so a
  * flag launch and a keypress cannot drift apart: it is Classic Mode, all of it
  * (240p, maxfps=-1, MSAA, the pillars, the filter), not just the AA bit. The
- * GUARD matters: portClassicSetLive(1) saves the current values into
- * classic_saved before forcing its own, so calling it when Classic Mode is
- * already on would overwrite the pre-classic snapshot with classic values and a
- * later Tab-off would have nothing to restore. `!s_CfgN64Aa` makes it
- * idempotent.
+ * GUARD matters: entering the mode saves the current values into classic_saved
+ * before forcing its own, so entering when Classic Mode is already on would
+ * overwrite the pre-classic snapshot with classic values and a later Tab-off
+ * would have nothing to restore. `!s_CfgN64Aa` makes it idempotent - and the
+ * option table's choke point (optSet) refuses a same-value set for the same
+ * reason, so this is belt and braces rather than the only defence.
  *
  * Consequence, stated rather than discovered: this WRITES midas.ini, exactly as
  * pressing Tab does, so the mode persists after the process exits. That is the

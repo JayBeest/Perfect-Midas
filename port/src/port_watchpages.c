@@ -61,7 +61,8 @@ struct PortWatchRowDef {
  *    into the ini, but in a mission the live value is Rare's game_options_entries[].
  *  - "hud centering" (PLAYER_OPTION_RATIO) has no folder row, so it sits at the end of HUD.
  *  - There is no APPLY CHANGES row. Display mode and resolution defer to the A press; the rest
- *    of VIDEO is live, and classic mode forces its rows when switched on (rowClassicSync).
+ *    of VIDEO is live, and classic mode forces its rows when switched on - applied by the
+ *    option table's choke point (port_options.c optSet), not by this page.
  *
  * The old "preset" row (Nintendo 64 / Modern) was removed because it fought
  * classic mode, which forces some of the same rows to other values. The
@@ -940,9 +941,10 @@ static const char *rowLabelShared(s32 page, s32 row)
 
 /* Classic mode on the watch. port_options.c owns the list
  * of rows it forces; the folder's VIDEO sheet pends them for APPLY CHANGES,
- * but the watch has no apply row, so the switch acts at once. */
+ * but the watch has no apply row, so the switch acts at once - which now means
+ * nothing more than writing n64_aa, because the option table's choke point
+ * (optSet) applies the mode for every surface. */
 extern s32  portClassicOwns(const char *key);
-extern void portClassicSetLive(s32 on);
 
 /** 1 = classic mode is on and owns this row: drawn dim, takes no input. */
 s32 portWatchRowLocked(s32 page, s32 row)
@@ -952,25 +954,6 @@ s32 portWatchRowLocked(s32 page, s32 row)
 
     return d != NULL && d->kind == PWROW_OPT && portClassicOwns(d->key)
         && aa >= 0 && portOptGet(aa) != 0;
-}
-
-/**
- * A row was just written. If it was the classic mode row and its value really
- * changed, force (or restore) the rows it owns; `was` is the value before the
- * write, so choosing ON while already on does nothing and the snapshot is not
- * retaken from the forced values.
- */
-static void rowClassicSync(const struct PortWatchRowDef *d, s32 opt, s32 was)
-{
-    if (d != NULL && d->key != NULL && strcmp(d->key, "n64_aa") == 0)
-    {
-        const s32 now = portOptGet(opt) != 0;
-
-        if (now != (was != 0))
-        {
-            portClassicSetLive(now);
-        }
-    }
 }
 
 /**
@@ -1440,12 +1423,12 @@ void portWatchRowStep(s32 page, s32 row, s32 dir)
         return;
     }
     {
-        const s32 was = portOptGet(opt);
-
         /* an inverted row's arrows must still move the way the SCREEN reads,
-         * so flip the direction with the presentation */
+         * so flip the direction with the presentation.
+         *
+         * No classic-mode sync here any more: portOptStep ends in the option
+         * table's choke point, which applies the mode when n64_aa changes. */
         portOptStep(opt, d->invert ? -dir : dir);
-        rowClassicSync(d, opt, was);
     }
 }
 
@@ -1464,12 +1447,9 @@ static void rowSetIndexLive(s32 page, s32 row, s32 idx)
     {
         idx = idx ? 0 : 1;
     }
-    {
-        const s32 was = portOptGet(opt);
-
-        portOptSetIndex(opt, idx);
-        rowClassicSync(d, opt, was);
-    }
+    /* portOptSetIndex ends in the choke point, which applies the mode when
+     * n64_aa changes - the watch needs no sync of its own. */
+    portOptSetIndex(opt, idx);
 }
 
 void portWatchRowSetIndex(s32 page, s32 row, s32 idx)

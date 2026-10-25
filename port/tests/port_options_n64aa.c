@@ -335,24 +335,75 @@ static void disabled_part_is_left_alone(void)
     CHECK(sVal[F_ANISO] == sMine[2]);  /* not forced */
 }
 
-/* portOptSetValue is the toggle's and the watch's setter, and both call
- * portClassicSetLive themselves. If this ever started transitioning on its own
- * the mode would be applied twice and the second entry would re-snapshot.
+/* portOptSetValue is the toggle's and the watch's setter. Since the choke point
+ * (optSet) applies the mode, this MUST transition now: the explicit calls that
+ * used to follow it in portClassicToggle, in the watch's rowClassicSync and in
+ * the console's cl_classic are gone, and without this the toggle would set the
+ * flag and force nothing - the original bug, one layer up.
  *
- * NOTE for plan.md Phase 2: that commit moves the transition into a shared
- * choke point and deletes the duplicates, at which point this expectation
- * inverts. It is written down here so the change is deliberate rather than a
- * surprise. */
-static void set_value_does_not_transition(void)
+ * This case asserted the opposite before plan.md Phase 2, when three surfaces
+ * each applied the mode themselves and a transition here would have been a
+ * double apply. The two assertions are a contract: whichever one is written
+ * down, the other must fail. */
+static void set_value_transitions(void)
 {
     const s32 aa = portOptFind("n64_aa");
+    int i;
 
     world_off_own();
     CHECK(portOptSetValue(aa, 1) == 1);
 
     CHECK(sVal[F_N64AA] == 1);
-    CHECK(sVal[F_LOWRES] == sMine[0]);  /* NOT forced: the caller's job */
-    CHECK(sSavedN == 0);                /* and nothing snapshotted */
+    expect_classic_forced();
+    CHECK(sSavedN == NCLASSIC);
+    for (i = 0; i < NCLASSIC; i++) {
+        CHECK(sSaved[i] == sMine[i]);
+    }
+}
+
+/* Exactly-once. If the mode were applied twice - once by the choke point and
+ * once by a leftover explicit call - the second entry would snapshot the FORCED
+ * values over the player's, which is the damage the guard exists to prevent.
+ * So: one set, and classic_saved still holds 480/1/2/60/4/0/0. */
+static void one_set_applies_once(void)
+{
+    const s32 aa = portOptFind("n64_aa");
+    int i;
+
+    world_off_own();
+    CHECK(portOptSetValue(aa, 1) == 1);
+
+    for (i = 0; i < NCLASSIC; i++) {
+        CHECK(sSaved[i] == sMine[i]);       /* not sClassicVal */
+        CHECK(sSaved[i] != sClassicVal[i]);
+    }
+
+    /* And a repeated ON through the same setter does not retake it. */
+    CHECK(portOptSetValue(aa, 1) == 1);
+    for (i = 0; i < NCLASSIC; i++) {
+        CHECK(sSaved[i] == sMine[i]);
+    }
+}
+
+/* The hold is the mechanism the VIDEO sheet uses: it lands its own pended
+ * values and must not have the choke point apply a mode underneath it. */
+static void the_hold_suppresses_the_transition(void)
+{
+    const s32 aa = portOptFind("n64_aa");
+
+    world_off_own();
+    portClassicSetHold(1);
+    CHECK(portOptSetValue(aa, 1) == 1);
+    CHECK(sVal[F_N64AA] == 1);
+    CHECK(sVal[F_LOWRES] == sMine[0]);      /* NOT forced: the sheet does it */
+    CHECK(sSavedN == 0);                    /* and nothing snapshotted */
+    portClassicSetHold(0);
+
+    /* Released, the transition works again - a hold must not leak. */
+    world_off_own();
+    CHECK(portOptSetValue(aa, 1) == 1);
+    expect_classic_forced();
+    CHECK(sSavedN == NCLASSIC);
 }
 
 int main(void)
@@ -363,7 +414,9 @@ int main(void)
     repeated_off_does_not_restore();
     other_keys_do_not_transition();
     disabled_part_is_left_alone();
-    set_value_does_not_transition();
+    set_value_transitions();
+    one_set_applies_once();
+    the_hold_suppresses_the_transition();
 
     printf("port_options_n64aa: all checks passed\n");
     return 0;

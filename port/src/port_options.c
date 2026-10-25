@@ -359,13 +359,54 @@ static s32 optGet(const char *key, s32 *out)
 }
 
 static void classicPartChanged(const char *key, s32 on);   /* "classic mode" below */
-void portClassicSetLive(s32 on);                          /* below */
+static void classicApplyMode(s32 on);                     /* below */
+/* the plan adapter, defined after the mode itself ("the rule, applied") */
+static void classicInputFill(ClassicInput *in, s32 parts[CLASSIC_MODE_MAX],
+                            s32 classic[CLASSIC_MODE_MAX], s32 current[CLASSIC_MODE_MAX],
+                            s32 saved[CLASSIC_MODE_MAX]);
+static void classicPlanApply(const ClassicPlan *p);
 
+/* 1 while a surface is landing a batch of its own and will handle the mode
+ * itself: the VIDEO sheet's Apply Changes, and Reset All. Mirrors sSaveHold, and
+ * exists for the same reason - so the shared choke point can be told to stand
+ * down without knowing which caller it is. */
+static s32 sClassicHold;
+
+void portClassicSetHold(s32 on)
+{
+    sClassicHold = on;
+}
+
+/**
+ * THE choke point. Every table write goes through here, so this is the one place
+ * that has to know that n64_aa carries a mode with it.
+ *
+ * Before this, four surfaces applied the preset and three did not, because each
+ * learned it separately: the toggle called portClassicSetLive, the watch called
+ * rowClassicSync, the VIDEO sheet pended its own values, and the console and the
+ * ini and the env var did nothing. An entry point added next year would have
+ * done nothing too. Now it cannot.
+ *
+ * Only on a REAL change: setting n64_aa to the value it already has must not
+ * re-enter the mode, because entering remembers the current values over
+ * classic_saved and the player's originals would be gone.
+ */
 static s32 optSet(const char *key, s32 v)
 {
+    const s32 transitions = (sClassicHold == 0) && (strcmp(key, "n64_aa") == 0);
+    s32 was = 0;
+
+    if (transitions)
+    {
+        optGet(key, &was);
+    }
     if (portVideoOptionSet(key, v) || portInputOptionSet(key, v) || portJoyPortOptionSet(key, v))
     {
         classicPartChanged(key, v != 0);
+        if (transitions && (v != 0) != (was != 0))
+        {
+            classicApplyMode(v != 0);
+        }
         return 1;
     }
     return 0;
@@ -1014,37 +1055,9 @@ s32 portOptSetIni(s32 i, const char *text)
     }
 
 have_value:
-    /*
-     * n64_aa is Classic Mode, and changing it by text has to run the preset.
-     *
-     * This is the one setter whose callers do no syncing of their own: the
-     * console (conCmdSet) and the Gameplay Options page both come through here,
-     * while the toggle, the watch and the VIDEO sheet each use portOptSetValue /
-     * portOptSetIndex and handle the transition themselves. Written here rather
-     * than in conCmdSet so the next by-text caller cannot miss it - which is
-     * exactly how the console shipped with the bug.
-     *
-     * Only on a real change: setting n64_aa to the value it already has must not
-     * re-enter the mode, because entering overwrites classic_saved with the
-     * forced values and the player's originals would be gone.
-     */
+    if (!optSet(o->key, v))
     {
-        const s32 isClassic = (strcmp(o->key, "n64_aa") == 0);
-        s32 was = 0;
-
-        if (isClassic)
-        {
-            optGet(o->key, &was);
-        }
-        if (!optSet(o->key, v))
-        {
-            return 0;
-        }
-        if (isClassic && (v != 0) != (was != 0))
-        {
-            portClassicSetLive(v != 0);   /* its own single ini write */
-            return 1;
-        }
+        return 0;
     }
     portOptSave();
     return 1;
@@ -1381,8 +1394,13 @@ void portOptResetDefaults(void)
     const s32 classic = portOptFind("n64_aa");
     s32 i;
 
-    /* Classic Mode first and raw (not portClassicSetLive), so its remembered
-     * values can't come back over the defaults set below. */
+    /* Held: every row goes to its code default below, including n64_aa's, so the
+     * preset must not force its own values in the middle of that. Before the
+     * choke point existed this needed no flag - optSet did not transition - and
+     * the comment below explains the ordering it relied on instead. */
+    portClassicSetHold(1);
+    /* Classic Mode first and raw, so its remembered values can't come back over
+     * the defaults set below. */
     if (classic >= 0 && sOptDefaultHave[classic])
     {
         optSet(sOpts[classic].key, sOptDefault[classic]);
@@ -1394,6 +1412,7 @@ void portOptResetDefaults(void)
             optSet(sOpts[i].key, sOptDefault[i]);
         }
     }
+    portClassicSetHold(0);
     portOptSave();
 }
 
@@ -1521,72 +1540,50 @@ static void classicPartChanged(const char *key, s32 on)
 }
 
 /**
- * The watch's classic mode row changed: turning on saves the current values
- * (classic_saved) and forces the classic ones, turning off restores whatever
- * was saved (4 or 7 fields depending on ini age); all in one ini write.
+ * Apply the mode: remember and force (on) or give back (off), as ONE plan.
+ *
+ * This replaced two hand-rolled loops (this and classicApplyMode's predecessor)
+ * that had to agree about snapshotting, about a part switched off, and about an
+ * older four-field classic_saved. They were the same rule written twice; now the
+ * rule is portClassicPlan and this is only the adapter. Called by the choke point
+ * in optSet, and by nothing else - a surface that wants the mode changes
+ * n64_aa, and the choke point does the rest.
  */
-void portClassicSetLive(s32 on)
+static void classicApplyMode(s32 on)
 {
-    /* video.c; absent headless, where there is no ini to remember them in */
-    extern s32  portVideoClassicSavedGet(s32 *v) __attribute__((weak));
-    extern void portVideoClassicSavedSet(const s32 *v) __attribute__((weak));
-    s32 v[PORTCLASSIC_COUNT];
-    s32 n = 0;
-    s32 i;
+    s32 parts[CLASSIC_MODE_MAX], classic[CLASSIC_MODE_MAX], current[CLASSIC_MODE_MAX];
+    s32 saved[CLASSIC_MODE_MAX];
+    ClassicInput in;
+    ClassicPlan plan;
 
-    if (on)
-    {
-        for (i = 0; i < PORTCLASSIC_COUNT; i++)
-        {
-            v[i] = portOptGet(portOptFind(sClassicKeys[i]));
-        }
-        if (portVideoClassicSavedSet != NULL)
-        {
-            portVideoClassicSavedSet(v);
-        }
-        for (i = 0; i < PORTCLASSIC_COUNT; i++)
-        {
-            if (portClassicPartOn(i))   /* a part switched off on the CLASSIC sheet stays the player's */
-            {
-                portOptSetValueQuiet(portOptFind(sClassicKeys[i]), sClassicVals[i]);
-            }
-        }
-    }
-    else
-    {
-        if (portVideoClassicSavedGet != NULL)
-        {
-            n = portVideoClassicSavedGet(v);
-        }
-        for (i = 0; i < n && i < PORTCLASSIC_COUNT; i++)
-        {
-            if (portClassicPartOn(i))   /* only what Classic Mode forced goes back */
-            {
-                portOptSetValueQuiet(portOptFind(sClassicKeys[i]), v[i]);
-            }
-        }
-    }
-    portOptSave();
+    classicInputFill(&in, parts, classic, current, saved);
+    in.op = on ? CLASSIC_OP_TOGGLE_ON : CLASSIC_OP_TOGGLE_OFF;
+    in.mode_on = on ? 1 : 0;
+    portClassicPlan(&in, &plan);
+    classicPlanApply(&plan);
 }
 
 /**
- * The classic_toggle key (default Tab): flips classic mode in play exactly as
- * the watch's Classic Mode row does, with no on-screen message.
+ * The classic_toggle key (default Tab): flips classic mode in play.
+ *
+ * One set, and nothing else: optSet sees n64_aa change and applies the mode. The
+ * explicit portClassicSetLive call that used to follow this is what made a
+ * second entry point - and, once the choke point existed, a double apply that
+ * would have re-snapshotted the player's values.
+ *
+ * portClassicSetLive itself is gone for that reason. It was the public "apply
+ * the mode" call that three surfaces each made for themselves; keeping it
+ * exported would invite the fourth.
  */
 void portClassicToggle(void)
 {
     const s32 opt = portOptFind("n64_aa");
-    s32 now;
 
     if (opt < 0)
     {
         return;
     }
-    now = portOptGet(opt) == 0;
-    if (portOptSetValue(opt, now))
-    {
-        portClassicSetLive(now);
-    }
+    portOptSetValue(opt, portOptGet(opt) == 0);
 }
 
 /* ---- the rule, applied ---------------------------------------------------

@@ -11,4 +11,9 @@ s32 portCrosshairColor(void);
  * classic_mode.h). Neither turns the mode on or off, and neither re-snapshots. */
 s32 portClassicMismatchParts(s32 *idx, s32 max);
 s32 portClassicRepair(void);
+
+/* Suppress the n64_aa transition while a surface lands a batch of its own
+ * values and will handle the mode itself (the VIDEO sheet's Apply Changes, Reset
+ * All). Mirrors portOptSaveHold. Always pair a 1 with a 0. */
+void portClassicSetHold(s32 on);
 #endif

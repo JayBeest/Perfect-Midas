@@ -468,7 +468,6 @@ static void conCmdClient(const char *name, const char *value)
         extern s32         portClassicRepair(void);
         extern s32         portClassicCount(void);
         extern const char *portClassicKey(s32 i);
-        extern void        portClassicSetLive(s32 on);
         extern s32         portOptSetValue(s32 i, s32 v);
         extern s32         portOptGet(s32 i);
         const s32 aa = portOptFind("n64_aa");
@@ -494,14 +493,15 @@ static void conCmdClient(const char *name, const char *value)
             }
             if (want == on)
             {   /* a transition, not a repair: re-entering would retake the
-                 * snapshot, so "already on" must not do the work again */
+                 * snapshot, so "already on" must not do the work again.
+                 * optSet leaves the same-value case alone for the same reason. */
                 portConPrintf(1, "cl_classic = %s (already)\n", on ? "on" : "off");
                 return;
             }
-            if (portOptSetValue(aa, want))
-            {
-                portClassicSetLive(want);
-            }
+            /* One set. The option table's choke point applies the mode for
+             * every surface, so this must not call portClassicSetLive after it -
+             * that is the double apply Phase 2 removed. */
+            portOptSetValue(aa, want);
             portConPrintf(1, "cl_classic = %s\n", want ? "on" : "off");
             return;
         }
