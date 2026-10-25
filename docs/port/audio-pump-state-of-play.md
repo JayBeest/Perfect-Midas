@@ -1,17 +1,30 @@
 # The audio-pump branch: state of play
 
-Branch `audio-pump-wallclock_gen4`, base `3a1ab62`, 16 commits (re-derive with
-`git rev-list --count 3a1ab62..HEAD`). This is the
-entry point for the next session: what the branch set out to do, what is fixed,
-what is not, and which claims rest on measurement rather than inference.
+Branch `audio-pump-wallclock_gen4`, base `3a1ab62`. Re-derive the commit count
+with `git rev-list --count 3a1ab62..HEAD` — it is deliberately not written here,
+because this branch has now miscounted itself five times, twice in one day.
+
+This is the entry point for the next session: what the branch set out to do,
+what is fixed, what is not, and which claims rest on measurement rather than
+inference.
 
 It does not replace the two long documents. It tells you which of them to open
 and why.
 
-## The 16 commits, in five phases
+- **`docs/port/audio-pump-audit-pass3.md`** — the execution audit. Findings
+  F1–F6, the execution record with predictions written before each run, and the
+  post-fix numbers now in §6. Read it for *evidence*.
+- **`docs/port/tick-and-field-accounting.md`** — the design record. The trace,
+  the four modes, the D-numbered defects, and §11's hw-pacing measurements.
+  Read it for *mechanism*.
 
-Read them as these units rather than serially. Every one builds clean and passes
-`ctest` 9/9 on its own — that was measured, not assumed (see §8).
+---
+
+## The commits, in five phases
+
+Read them as these units rather than serially. Every commit through `af78f4a`
+builds clean and passes `ctest` 9/9 on its own — measured, not assumed (see
+below). The commits after it are documentation amendments to these pages.
 
 **A. The four numbers** (`ca41f25`, `97659f6`, `85fa9f1`) — the tick and field
 rate maths as pure functions, `fields/s` published, the block showing
@@ -32,18 +45,58 @@ measurement, and record the audit itself.
 **E. What that work exposed** (`ef16465`, `df881c9`, `f04d421`, `af78f4a`) —
 the state-of-play page, the pump's underrun ratchet defect found while checking
 an audio complaint, the harnesses made durable, and a documentation sweep.
+Subsequent commits are documentation amendments to this page and to
+`NEXT_AGENT_V4.md`; `git log` lists them and they carry no code.
 
 Phase C is the interesting one for a reader: it contains the branch's own
-retraction, and the two commits in it that supersede earlier ones are the
-strongest argument anyone could make for folding this history (§8 says why that
-argument loses).
+retraction, and the commits in it that supersede earlier ones are the strongest
+argument anyone could make for folding this history.
 
-- **`docs/port/audio-pump-audit-pass3.md`** — the execution audit. Findings
-  F1–F6, the execution record with predictions written before each run, and the
-  post-fix numbers now in §6. Read it for *evidence*.
-- **`docs/port/tick-and-field-accounting.md`** — the design record. The trace,
-  the four modes, the D-numbered defects, and §11's hw-pacing measurements.
-  Read it for *mechanism*.
+### Why the history is not folded — decided 2026-10-25
+
+The question was whether to squash some of these commits before review. The
+answer is no, and this section is the evidence for it so the question does not
+have to be re-argued.
+
+**Every commit stands on its own.** All of them were checked out in a separate
+worktree and built and tested individually
+(`cmake -DGE_PORT_TESTS=ON -DGE_NATIVE_64=ON -DGE_VIDEO=ON
+-DSDL2_DIR=/opt/homebrew/lib/cmake/SDL2`): every one builds with zero errors and
+passes `ctest` 9/9. There is no broken bisect step, so no mechanical reason to
+fold.
+
+**Folding would break the citation graph.** At the time of the decision the
+tracked docs cited commit SHAs 66 times, and three more sat in code
+(`port/tests/audio_pace.c` and `scripts/port/audio_pump_log.py` cite
+`df881c9`). Those citations are this branch's evidence system — "the rule before
+`df881c9`", "see `cb98c39`", "`52807f7` corrects F2, F4, F5 and F6". Rewriting
+any commit changes its SHA and every descendant's, so folding one commit turns
+dozens of references into dangling ones: the same defect as a handoff pointing
+at an untracked file, which is what Task B of `NEXT_AGENT_V4.md` exists to fix.
+
+**The case for folding, stated honestly.** Four commits contain content a later
+commit corrects: `bbc5c99` added a false `tickhz` claim that `52807f7` and then
+`87af349` fixed; `6d02aa1` added the `fld` versus `model held` comparison that
+`cb98c39` replaced because it reported the opposite of the truth; `17bf80b`
+wrote "a here is the default cap of 8" that `af78f4a` corrected. A checkout of
+those trees gives you a lying manual and a misleading instrument.
+
+**Why that loses.** Nothing is *broken*: each tree compiles and its suite
+passes, so a bisect is never misled about where a regression entered. The
+project's own doctrine is that the record of a wrong first conclusion is worth
+more than a tidy one — folding deletes exactly the evidence four passes
+accumulated. And expecting no commit to supersede an earlier one is a fiction;
+what has to be true is the tip.
+
+**What was done instead.** The five-phase map above, so a reviewer reads five
+units instead of seventeen. That is the reviewability folding would have bought,
+at no cost to the citations.
+
+**When to reopen this decision.** Only two conditions: the branch is going to be
+squashed at merge anyway (then intermediate hygiene is moot and there is no work
+to do), or a commit is found that does not build or whose suite fails (which
+would already be a defect to fix, not a folding argument). "It would look
+nicer" is not a condition — that is what the map is for.
 
 ---
 

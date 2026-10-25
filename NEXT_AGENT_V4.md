@@ -20,10 +20,14 @@ is documentation that depends on Task A's outcome for one of its sections.
 
 ## 0. State you are inheriting
 
-Branch `audio-pump-wallclock_gen4`, 16 commits on top of `3a1ab62`, tip
-`af78f4a`. Re-derive the count with `git rev-list --count 3a1ab62..HEAD` rather
-than trusting this line: three handoffs in a row have stated the wrong total,
-because a number written down is stale by the time the next commit lands.
+Branch `audio-pump-wallclock_gen4`, on top of `3a1ab62`, tip `4e731d9`. **Do
+not trust a commit count written in this file.** Derive it:
+`git rev-list --count 3a1ab62..HEAD`. Three handoffs in a row stated the wrong
+total, and this branch's own session miscounted itself twice in one day; a number
+written here is a snapshot, not a fact.
+
+The list below stops at `af78f4a`; the commits after it are documentation-only
+amendments to this brief, and `git log` is the authority for the tip.
 
 ```
 af78f4a  docs: the counts and the cap claim the last commit left stale
@@ -44,10 +48,9 @@ bbc5c99  docs: correct the shipped manuals' frame and tick claims
 ca41f25  stats: the frame and tick rate maths, as tested pure functions
 ```
 
-Unpushed — `origin/audio-pump-wallclock_gen4` is still at `3a1ab62`, so all 16
-commits exist only here. That is also why this history could still be rewritten;
-the window closes the moment it is pushed. §8 gives the verdict on whether it
-should be.
+Unpushed — `origin/audio-pump-wallclock_gen4` is still at `3a1ab62`, so the whole
+branch exists only here. §8 records the decision not to squash it; that is
+settled and needs no action.
 
 Baseline: build clean except the pre-existing
 `reducing alignment of section __DATA,__common` linker warning, `ctest` **9/9**
@@ -503,63 +506,30 @@ A script that guesses is worse than no script.
 
 ---
 
-## 8. Should this history be folded? No — and the window is now
+## 8. History folding — decided: do not fold
 
-Asked and answered on 2026-10-25, before any push. The question was whether to
-`squash` some of the 16 commits into fewer before review.
+**A decision record, not a task. There is nothing to do here** — do not spend
+time on it, and do not re-litigate it.
 
-**Measured first.** All 16 commits were checked out in a separate worktree and
-built and tested individually (`cmake -DGE_PORT_TESTS=ON -DGE_NATIVE_64=ON
--DGE_VIDEO=ON -DSDL2_DIR=/opt/homebrew/lib/cmake/SDL2`): **16 of 16 build with
-zero errors and pass `ctest` 9/9.** So there is no broken bisect step and no
-mechanical reason to fold.
+Decided 2026-10-25, before any push. The history stays as it is: no squashing, no
+reordering, no rewriting past commit messages. Commits made from here are new
+work on the tip, not amendments to what came before.
 
-**The cost is not the 16 SHAs; it is the citation graph.** At `af78f4a` the
-tracked docs cite commit SHAs **66 times**, and three more sit in code
-(`port/tests/audio_pace.c` and `scripts/port/audio_pump_log.py` cite `df881c9`).
-Those citations are the branch's evidence system: "the rule before `df881c9`",
-"see `cb98c39`", "`52807f7` corrects F2, F4, F5 and F6". Rewriting any commit
-changes its SHA and every descendant's, so folding one commit turns dozens of
-references into dangling ones — the exact defect §3.1 and §3.2 exist to fix, and
-the same defect as a handoff pointing at an untracked file. You can only fold by
-paying that price, and fixing 66 citations in already-fragile prose invites new
-false statements.
+Two facts, in case a reader goes looking:
 
-**The honest case for folding, and why it loses.** Four commits contain content
-a later commit on the same branch corrects: `bbc5c99` added a false `tickhz`
-claim ("`hw` when maxfps is -1") that `52807f7` and then `87af349` had to fix;
-`6d02aa1` added the `fld` versus `model held` comparison that `cb98c39` replaced
-because it reported the opposite of the truth; `17bf80b` wrote "a here is the
-default cap of 8" that `af78f4a` corrected; and `af78f4a` itself then miscounted
-the branch (see below). A checkout of those trees gives you a lying manual and a
-misleading instrument.
+- **Every commit builds and passes on its own.** Each was checked out in a
+  separate worktree and built and tested individually; all build clean and pass
+  `ctest` 9/9. There is no broken bisect step.
+- **Folding would break the citation graph.** The docs cite commit SHAs dozens of
+  times ("the rule before `df881c9`", "see `cb98c39`", "`52807f7` corrects F2"),
+  and rewriting a commit changes its SHA and every descendant's. That is exactly
+  the defect Task B exists to fix: a reference into nothing.
 
-That argument loses on three grounds. Nothing is pushed, but nothing is *broken*
-— each tree compiles and its suite passes, so a bisect is never misled about
-where a regression entered. The project's own doctrine, written into the audit
-and repeated in §6, is that **the record of a wrong first conclusion is worth
-more than a tidy one**; folding deletes precisely the evidence the branch spent
-four passes accumulating. And a reading of history that expects no commit to
-supersede an earlier one is a fiction — what has to be true is the *tip*, and it
-is, with one exception that is now fixed.
+The full reasoning — including the honest case for folding and why it loses — is
+in `docs/port/audio-pump-state-of-play.md`, under "Why the history is not
+folded". The five-phase commit map there is the substitute for a tidier history.
 
-**What to do instead.** `docs/port/audio-pump-state-of-play.md` now opens with
-a five-phase commit map, so a reviewer reads four units instead of sixteen. That
-is the reviewability benefit folding would have bought, at no cost to the
-citations.
-
-**The window.** `origin/audio-pump-wallclock_gen4` is still at `3a1ab62`, so
-these 16 commits exist only locally; a `rebase -i` would work today and would
-not after a push. Do not take that as an invitation — the recommendation is to
-push as-is, with the commit map carrying the narrative.
-
-**One correction this exercise produced, against itself.** `af78f4a` was
-committed under the subject "the counts and the cap claim the last commit left
-stale", and it wrote "15 commits, tip `f04d421`" — into the same commit that
-added it. The branch was 16 and the tip was `af78f4a`. That is the fifth time on
-this branch a number was copied forward instead of derived, and the second time
-in one day by the same session. Both documents now state the command
-(`git rev-list --count 3a1ab62..HEAD`) next to the number, and §0 says to
-re-derive it rather than trust the line. The same happened to this section's own
-first draft: it claimed 65 citations, which was a total measured before the
-section's prose added more; the figure above is measured at `af78f4a`.
+**Reopen only if** the branch will be squashed at merge anyway (then
+intermediate hygiene is moot), or a commit is found that does not build or whose
+suite fails (a defect to fix, not a folding argument). "It would look nicer" is
+not a reason.
