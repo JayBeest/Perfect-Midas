@@ -9,6 +9,18 @@ Everything below is grounded in probes run on 2026-10-25 against
 says so, because this branch's recorded failure mode is a fix verified on one
 shape of input and reported as the mechanism working.
 
+**Status — 2026-10-25.** Phases 0 and 1 are landed and verified (§3.1 records
+the two tests they added). Phase 2 has its commit shape fixed below and is
+not started; Phase 3 follows it.
+
+Landed, in order:
+
+- `tests: pin Classic Mode's forced values as a pure rule` — the rule + its test
+- `console: cl_classic, and the boot report for a half-applied Classic Mode`
+- `options: set n64_aa by text and Classic Mode's values follow`
+- `tests: drive portOptSetIni, so the setter that lost the call is covered`
+- `docs: record the Classic Mode repair as landed, and close the console finding`
+
 ---
 
 ## 1. The problem, stated precisely
@@ -183,7 +195,7 @@ from the toggle. This is also the manual escape hatch for anyone already stuck.
 
 ### 0.4 Exit criteria for Phase 0
 
-- `ctest` 11/11 (`classic_mode` added).
+- `ctest` 12/12 (`classic_mode` and `port_options_n64aa` added — §3.1).
 - All three mismatch states announce, and the consistent state is silent —
   executed on all four: console, hand-edit, `GE_N64AA=1`, and consistent.
 - `cl_classic fix` repairs a hand-edited `n64_aa=1`, verified by the ini diff:
@@ -226,20 +238,70 @@ write, call `rowClassicSync`'s equivalent after.
 - Con: duplicates the watch's applier shape for a second time instead of
   deleting one — which is what Phase 2 exists to stop.
 
-**Recommendation: A1 with the helper relocated into `port_options.c`.** It is
-the smallest change that adds no fourth implementation, and Phase 2 will make
-the helper the only one.
+**Recommendation, as landed: neither A1 nor A2 exactly.** The fix went into
+`portOptSetIni` itself, calling `portClassicSetLive` — the toggle's own path,
+already in `port_options.c`. That is A1's shape (reuse the existing helper, no
+dependency on the watch) without relocating anything, and it also closes the same
+hole for the Gameplay Options page, which reaches the table by text too. A second
+caller cannot miss it, which was the point.
 
 ### Exit criteria
 
-- `cl_n64_aa 0` from a Classic-on state restores all seven values and
-  `classic_saved` becomes irrelevant (executed — the same probe as the audit,
-  now showing seven restored values instead of one line changed).
+- `cl_n64_aa 0` from a Classic-on state restores all seven values from
+  `classic_saved` (executed — the same probe as the audit, now showing seven
+  restored values instead of one line changed).
 - `cl_n64_aa 1` from `480/bilinear/2/60/4/0/0` forces seven and writes a
   snapshot (executed).
 - Both are idempotent on a second run (executed).
-- Phase 0's temporary `optSet` log line is deleted in this commit, and the audit
-  entry for the console defect is updated to point at the fix.
+- **Deviation, as landed:** Phase 0 was to add a temporary `optSet` log for the
+  console's own path, deleted again here. It was left out — that log would have
+  mislabelled Tab and the sheet, since all three reach the same setter, and it
+  would have lived for one commit. The console is corrected outright instead,
+  which is the stronger form of the same goal.
+
+### 3.1 The tests Phases 0 and 1 land, and what each covers
+
+Two new ctest entries, because they cover different things and only one of them
+would have caught the defect that actually shipped.
+
+**`classic_mode`** (`port/tests/classic_mode.c`) — the **rule**. Drives
+`portClassicPlan` and `portClassicMismatch` with value sets computed by hand.
+Sixteen cases: mismatch per part, a consistent file, a 4-field older snapshot, a
+part switched off, no parts at all, `saved_n` longer than `n`, writes emitted in
+part order, and FIX never snapshotting. Mutation-checked: forcing the snapshot
+off and emitting unchanged values each fail a different case.
+
+**`port_options_n64aa`** (`port/tests/port_options_n64aa.c`) — the **seam**.
+This one exists because the rule test would have passed happily while the setter
+never called it, which is exactly how the console bug shipped. It links the
+shipped `port_options.c` against a fake option table, so the real `sOpts` rows,
+`portOptFind`, the `optSet` path and `portClassicSetLive` all run; only the six
+bridges out of the file are faked. Seven cases: text ON forces and snapshots,
+text OFF restores, a repeated ON keeps the original snapshot, a repeated OFF does
+not apply a stale one, another key does not transition, a disabled part is left
+alone, and `portOptSetValue` does not transition on its own. Mutation-checked:
+disabling the transition call fails the first forced value, and removing the
+"only on a real change" guard fails the snapshot assertion.
+
+**One assertion in it is a contract, not a bug.**
+`set_value_does_not_transition` asserts that `portOptSetValue` does **not** run
+the transition, because `portClassicToggle` and the watch's `rowClassicSync`
+call `portClassicSetLive` themselves and a second entry would re-snapshot the
+player's values. Phase 2 deliberately inverts that: the transition moves into
+the shared choke point and the duplicates are deleted. **The assertion must flip
+in the same commit as that change** — otherwise the suite correctly refuses the
+work and the tempting move is to delete the test instead of updating it. That is
+the reason for the exception below.
+
+**Exception to the one-subject-per-commit rule, for Phase 2 only.** Phase 2
+lands **code and test together in one commit**. The rule elsewhere on this
+branch is a fix, a test or a doc, never mixed, because a test that passes
+proves nothing on its own and a fix without its test is an unverified claim.
+Phase 2 is the case where separating them produces a broken intermediate: the
+first commit would either fail its own suite (test not yet updated) or delete
+the guard (code not yet moved). Neither is a state anyone should have to
+cherry-pick or bisect through. So: one commit, message naming both halves, and
+the commit is not green until both are in.
 
 ---
 
@@ -272,13 +334,27 @@ The hazards from probe 4, each with its defusing move:
   purpose;
 - **ordering** — with the hold in place, a pending `n64_aa` anywhere in sheet
   order lands the same values. Pin it with a test that applies a plan with
-  `n64_aa` first and last and asserts identical results.
+  `n64_aa` first and last and asserts identical results;
+- **`set_value_does_not_transition` inverts** — `port/tests/port_options_n64aa.c`
+  currently asserts that `portOptSetValue` does *not* transition, because today
+  the toggle and the watch do it themselves. This phase makes that assertion
+  false. Flip it to assert the transition *does* happen while a repeated set
+  still does not re-snapshot, in the same commit — see §3.1.
+
+### Commit shape: the documented exception
+
+**One commit containing the code and the test.** This is the only phase where
+the one-subject rule is waived, and the reason is mechanical rather than
+stylistic: the test asserts the old contract today and the new one after, in the
+same file, so splitting it leaves either a red suite or a deleted assertion in
+between. The message names both halves and the commit is green only when both
+are in.
 
 ### Exit criteria
 
 - Every entry point (all seven from §1) produces consistent state, executed.
 - `grep -c portClassicSetLive` outside `port_options.c` is 0.
-- `ctest` 11/11, plus the ordering test above.
+- `ctest` 12/12, plus the ordering test above.
 - The audit's headline finding is closed.
 
 **Risk:** this is the slice most likely to regress a working path, and it is
@@ -371,6 +447,13 @@ cp build_macos/midas.ini /tmp/ini.before
 diff /tmp/ini.before build_macos/midas.ini   # must be empty
 md5 -q build_macos/Data/Saves/eeprom.bin     # 3590c7df0edb0930f4e4248826e8ab64
 ```
+
+A new test is not proven by being green. Both tests in §3.1 were
+mutation-checked before they were trusted: break the shipped code deliberately,
+confirm the test fails at the case that covers the change, restore, confirm it
+passes. A test that cannot fail is a comment with extra steps, and this branch
+has already shipped a harness whose assertion checked the log sentence instead
+of the resulting config.
 
 **Precedence probes must set `n64_aa=0` explicitly and check the
 `-n64_aa -> Classic Mode on (applied)` line first.** Two false findings in the
