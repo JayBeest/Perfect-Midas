@@ -552,6 +552,16 @@ if(GE_PORT_TESTS)
     add_executable(audio_pace_test port/tests/audio_pace.c port/src/audio_pace.c)
     add_test(NAME audio_pace COMMAND audio_pace_test)
 
+    # The GE_AUDIO_* overrides on top of that policy: defaults when unset, one
+    # field at a time, and the refusals. Separate from audio_pace because the
+    # policy must stay free of getenv - that is what keeps it pure. It links
+    # audio_pace.c as well, because one case drives the shipped ratchet across
+    # the config this parser produces: "a lone target still lets the ratchet
+    # learn" is a measurement, not a restatement of the arithmetic.
+    add_executable(audio_pace_env_test port/tests/audio_pace_env.c
+                   port/src/audio_pace_env.c port/src/audio_pace.c)
+    add_test(NAME audio_pace_env COMMAND audio_pace_env_test)
+
     # The -n64_aa / -audio_pump / -audio_log argument parse: pure, and worth a
     # test because a boot flag that is silently ignored looks exactly like one
     # that worked.

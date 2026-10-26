@@ -14,8 +14,8 @@
 
 #include "audio_pace.h"
 
-/* Stereo s16: one sample frame is this many bytes downstream. */
-#define PACE_BYTES_PER_SAMPLE 4
+/* PACE_BYTES_PER_SAMPLE now lives in audio_pace.h: the config parser needs it
+ * too, and one definition is better than two that can drift. */
 
 /* Credit is in sample*1000 units, so 1 ms of 22050 Hz output is 22050 units. */
 #define PACE_CREDIT_PER_SAMPLE 1000

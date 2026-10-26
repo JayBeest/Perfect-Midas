@@ -75,47 +75,19 @@
 #include <PR/abi.h>
 
 #include "audio_pace.h"
+#include "audio_pace_env.h"
 #include "port_audio_stats.h"
 
 /* ---- config ------------------------------------------------------------ */
 
-#define PORT_AUDIO_RATE      22050  /* both GE banks; alSynConfig outputRate */
+/* The pacing defaults live in port/include/audio_pace_defaults.h, because the
+ * parser's test builds a PortAudioPaceCfg from the same numbers. What stays
+ * here is the config this file only needs. */
+#include "audio_pace_defaults.h"
+
 #define PORT_AUDIO_DEV_SAMPLES 256       /* device period, 11.6 ms */
-#define PORT_AUDIO_QUEUE_MAX (16 * 1024)
-/* Queue depth held in steady state: the latency/safety trade, nothing else.
- * 40 ms is ~3.5 device periods of cushion - enough that a hitchy Windows
- * shared-mode mixer cannot starve it, small enough to stay inaudible on a
- * reload. Tighten only with a device that has proven it never underruns. */
-#define PORT_AUDIO_TARGET_MS 40
-#define PORT_AUDIO_TARGET    (PORT_AUDIO_RATE * 4 / 1000 * PORT_AUDIO_TARGET_MS)
-#define PORT_AUDIO_TARGET_MAX (10 * 1024) /* raised this far by queues that ran dry */
-#define PORT_AUDIO_TARGET_STEP 1024       /* per underrun, within the ceiling above */
-#define PORT_AUDIO_TARGET_EASE 256        /* per quiet 10 s window, back toward TARGET */
-#define PORT_AUDIO_CATCHUP_MS 250         /* wall time one pump may credit */
 #define PORT_AUDIO_DEADBAND  512          /* queue error not worth correcting */
 #define PORT_AUDIO_DRIFT_MAX 32           /* bias authority per frame, samples */
-#define PORT_AUDIO_DRAIN_MS  2000         /* no consumption this long = stalled */
-#define PORT_AUDIO_DEV_PERIOD_MS 12       /* cushion over one pump interval */
-/* Longest pump interval the queue is asked to bridge. Single-digit frame rates
- * are real (classic/demo modes), so cover down to 4 fps; a longer gap is a
- * hitch, not a frame rate, and a hitch is allowed to click rather than demand a
- * backlog nobody would tolerate. */
-/* Longest pump interval the queue is asked to bridge. Single-digit frame rates
- * are real (classic and demo modes), so this covers down to 1 fps. Beyond that
- * the gap is a hitch, not a frame rate: audio cannot be synthesised for time
- * that has not been pumped, and a 1 s backlog is already the point where
- * latency stops being worth buying.
- *
- * THE COST, stated plainly: at N fps the pump runs N times a second, so each
- * pump must bridge 1000/N ms of audio, and that backlog IS the audio latency.
- * At 60 fps it is 17 ms and inaudible; at 2 fps it is 500 ms and the music runs
- * half a second behind. That is inherent to pumping from the render loop - the
- * only way out is a separate audio thread, which the AL library's shared state
- * makes a much larger change. Continuous audio at high latency beats crackle at
- * low latency, so that is the trade taken here. */
-#define PORT_AUDIO_MAX_INTERVAL_MS 1000
-#define PORT_AUDIO_ALIGN     16           /* alAudioFrame rounds to this */
-#define PORT_MAX_FRAME_SAMPLES 1024
 /* Enough render calls to fill the interval floor at the longest supported pump
  * interval, with margin: 1000 ms at 22050 Hz is 22050 samples, 22 calls of
  * 1024. A fixed 16 silently under-filled below ~1.5 fps. */
@@ -937,7 +909,9 @@ static s32 portAudioInit(void)
 static PortAudioPaceClock s_Clock;
 static PortAudioPaceTarget s_TargetState;
 static PortAudioPaceDrain s_Drain;
-static const PortAudioPaceCfg s_PaceCfg = {
+
+/* The compiled-in configuration: one source of truth for "unset means this". */
+static const PortAudioPaceCfg s_PaceDefaults = {
     PORT_AUDIO_RATE,
     PORT_AUDIO_ALIGN,
     PORT_MAX_FRAME_SAMPLES,
@@ -951,6 +925,62 @@ static const PortAudioPaceCfg s_PaceCfg = {
     PORT_AUDIO_QUEUE_MAX,
     PORT_AUDIO_MAX_INTERVAL_MS
 };
+
+/* The configuration in force. Non-const only because it is written once, by
+ * paceCfgInit(), before the first pump; nothing else may assign to it. Reading
+ * the environment mid-run would move the pump's invariants under a live device,
+ * which is exactly what making the defaults const is there to prevent. */
+static PortAudioPaceCfg s_PaceCfg;
+static s32 s_PaceCfgRead;   /* 0 = the environment has not been read yet */
+
+/**
+ * Resolve the pace config once: the compiled-in defaults, then any GE_AUDIO_*
+ * overrides (port/include/audio_pace_env.h). With no variables set this leaves
+ * s_PaceCfg byte-identical to s_PaceDefaults, so a run that does not use the
+ * feature behaves exactly as before it existed.
+ *
+ * Every refusal is logged with its reason. A silently ignored setting is the
+ * defect this reporting exists to prevent: it looks exactly like one that
+ * worked.
+ */
+static void paceCfgInit(void)
+{
+    PortAudioPaceEnvReport rep;
+    s32 shown;
+
+    if (s_PaceCfgRead) {
+        return;
+    }
+    s_PaceCfgRead = 1;
+
+    s_PaceCfg = s_PaceDefaults;
+    portAudioPaceCfgFromEnv(&s_PaceCfg, &rep);
+
+    shown = (rep.rejected < PORT_AUDIO_PACE_ENV_WHY_MAX) ? rep.rejected
+                                                        : PORT_AUDIO_PACE_ENV_WHY_MAX;
+    for (s32 i = 0; i < shown; i++) {
+        portConLogf("ge: audio: pace: %s (default kept)\n", rep.why[i]);
+    }
+
+    if (rep.applied > 0 || rep.rejected > 0 || rep.ceiling_raised) {
+        /* Two different outcomes, two different sentences: a raise that kept the
+         * ratchet's room, and one the one-second cap left without any. Saying
+         * both at once ("raised to keep the headroom (no headroom left)") reads
+         * as a contradiction. */
+        const char *ceil_note = "";
+        if (rep.ceiling_raised) {
+            ceil_note = rep.ceiling_capped
+                ? ", ceiling capped at 1 s - no headroom left for the ratchet"
+                : ", ceiling raised to keep the ratchet's headroom";
+        }
+        portConLogf("ge: audio: pace: %d overridden, %d refused%s; "
+                    "rate=%u target=%u max=%u step=%u ease=%u catchup=%u drain=%u queue_max=%u\n",
+                    rep.applied, rep.rejected, ceil_note,
+                    s_PaceCfg.rate, s_PaceCfg.target, s_PaceCfg.target_max,
+                    s_PaceCfg.target_step, s_PaceCfg.target_ease,
+                    s_PaceCfg.catchup_ms, s_PaceCfg.drain_ms, s_PaceCfg.queue_max);
+    }
+}
 
 static u32 s_ClockTick;      /* SDL_GetTicks() of the previous pump */
 static s32 s_ClockPrimed;
@@ -1277,6 +1307,10 @@ void portAudioPump(void)
     s32 dry_now = 0;      /* this pump starved the sink (overlay stats) */
     s32 over_cap_now = 0; /* this pump refused a frame at the cap */
     s32 skipped_now = 0;  /* this pump played a rejected frame as silence */
+
+    /* The pace config is read from the environment exactly once, here, before
+     * the first pump can use it. */
+    paceCfgInit();
 
     /* REENTRANCY GUARD: portPumpEvents fires from inside blocking
      * osRecvMesg, and the AL client handlers (sndp, the CSP sequencers)

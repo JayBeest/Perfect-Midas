@@ -44,6 +44,11 @@
  * which is a step discontinuity and therefore an audible click.
  */
 
+/* One sample frame downstream: stereo s16. Shared by the policy and by the
+ * config parser, so that "one second of audio" means the same number of bytes
+ * in both and the two cannot drift apart. */
+#define PACE_BYTES_PER_SAMPLE 4
+
 typedef struct {
     unsigned rate;        /* output sample rate, Hz                       */
     unsigned frame_align; /* sample multiple alAudioFrame wants (16)      */

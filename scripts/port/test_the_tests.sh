@@ -300,6 +300,91 @@ mutate "$PO" 's/    classicPlanApply\(&plan\);\n    if \(plan.snapshot \|\| plan
     check "repair does not persist" kill
 
 echo
+echo "the pace config environment (port/src/audio_pace_env.c)"
+PE="$ROOT/port/src/audio_pace_env.c"
+TPE="$ROOT/port/tests/audio_pace_env.c"
+APE="$ROOT/port/src/audio_pace.c"
+run_pe() {
+    local label="$1" want="$2"
+    cc $CC_BASE "$TPE" "$W/mut.c" "$APE" -o "$W/t" 2>"$W/cc.log" || { printf '  NOBUILD  %s\n' "$label"; status=1; return; }
+    if "$W/t" >/dev/null 2>&1; then
+        if [ "$want" = "survive" ]; then printf '  ok       %-50s survives (expected)\n' "$label";
+        else printf '  GAP      %-50s SURVIVED - no test kills this\n' "$label"; status=1; fi
+    else
+        if [ "$want" = "kill" ]; then printf '  ok       %-50s killed\n' "$label";
+        else printf '  BROKEN   %-50s the baseline itself fails\n' "$label"; status=1; fi
+    fi
+}
+pe_mutate() {
+    cp "$PE" "$W/mut.c"
+    perl -0pi -e "$1" "$W/mut.c"
+    if cmp -s "$PE" "$W/mut.c"; then printf '  NO-OP    %s\n' "$2"; status=1; return 1; fi
+}
+# The whole promise of the feature: an unset variable must not move its field.
+# A parser that assigns a zero for absent input passes every "set" case below
+# and silently zeroes the pump's config on a normal launch.
+pe_mutate 's/    if \(text == NULL \|\| text\[0\] == .\\0.\) \{\n        if \(text != NULL && text\[0\] == .\\0.\) \{\n            reject\(rep, name, text, "empty value"\);\n        \}\n        return 0;\n    \}/    if (text == NULL || text[0] == \x27\\0\x27) {\n        *dst = 0;\n        return 1;\n    }/' "unset: write a zero instead of leaving the default" && \
+    run_pe "an unset variable zeroes its field" kill
+# The range check is what keeps a zero rate and a zero step out. Without it the
+# CREDIT arithmetic divides by a rate nobody has.
+pe_mutate 's/    if \(v < lo \|\| v > hi\) \{/    if (0) {/' "range: accept anything" && \
+    run_pe "a zero rate is accepted" kill
+# The derivation must match the compile-time macro exactly, integer division
+# and all. Multiplying before dividing gives 3528 where the macro gives 3520 -
+# a 2% latency change nobody asked for on a run that set nothing.
+pe_mutate 's/want_target = out->rate \* 4u \/ 1000u \* v;/want_target = out->rate * 4u * v \/ 1000u;/' "target: divide at the end" && \
+    run_pe "GE_AUDIO_TARGET_MS=40 disagrees with the macro" kill
+# Phase 5's whole check: set a 250 ms target alone and the ceiling has to follow,
+# or the one setting a launcher exposes is the one that cannot be used alone.
+pe_mutate 's/                if \(rep != NULL\) \{\n                    rep->ceiling_raised = 1;\n                \}//' "target: do not raise the ceiling" && \
+    run_pe "a target alone leaves target above target_max" kill
+# ...and it must follow WITH headroom. A ceiling raised to exactly the target
+# satisfies target <= target_max while leaving the underrun ratchet nothing to
+# step into - valid-looking config, learning silently dead. This is the mutant
+# the whole "D" decision exists to kill.
+pe_mutate 's/                unsigned raised = want_target \+ room;/                unsigned raised = want_target;/' "target: raise to the target, not past it" && \
+    run_pe "a lone target leaves the ratchet no room" kill
+# The headroom has to scale with the rate, or a rate override silently changes
+# how much learning room there is.
+pe_mutate 's/    unsigned long long room = \(unsigned long long\) \(PORT_AUDIO_TARGET_MAX - PORT_AUDIO_TARGET\)\n                            \* \(unsigned long long\) rate\n                            \/ \(unsigned long long\) PORT_AUDIO_RATE;/    unsigned long long room = (unsigned long long) (PORT_AUDIO_TARGET_MAX - PORT_AUDIO_TARGET);/' "headroom: ignore the rate" && \
+    run_pe "headroom does not follow the rate" kill
+# One second of audio is the bound. Without the cap a target at the ceiling
+# would ask for a backlog past the latency policy.
+pe_mutate 's/                if \(raised > one_second\) \{/                if (0) {/' "headroom: no one-second cap" && \
+    run_pe "the raised ceiling passes one second" kill
+# ...and a cap that leaves no room must be reported, not passed as ordinary.
+pe_mutate 's/                        if \(rep != NULL\) \{\n                            rep->ceiling_capped = 1;\n                        \}//' "cap: do not report dead headroom" && \
+    run_pe "a capped ceiling hides that the ratchet is dead" kill
+# A stated ceiling is a constraint. The target yields; accepting both
+# contradicts the ratchet's ceiling.
+pe_mutate 's/        if \(want_target > ceiling\) \{/        if (0) {/' "ceiling: never bind" && \
+    run_pe "a stated ceiling is ignored" kill
+# ...and the ceiling may not fall below the target already in force.
+pe_mutate 's/        \} else if \(v < out->target\) \{/        } else if (0) {/' "ceiling: allow below the target" && \
+    run_pe "a ceiling below the current target is accepted" kill
+# Two names swapped in the reader passes every synthetic case above and tunes
+# the wrong field - the classic copy/paste defect, invisible without this.
+pe_mutate 's/    in->catchup_ms = getenv\(kNames\[4\]\);\n    in->drain_ms = getenv\(kNames\[5\]\);/    in->catchup_ms = getenv(kNames[5]);\n    in->drain_ms = getenv(kNames[4]);/' "read: swap two names" && \
+    run_pe "GE_AUDIO_CATCHUP_MS tunes the drain watchdog" kill
+# A refusal that is not counted is a refusal nobody can report.
+pe_mutate 's/    rep->rejected\+\+;/    (void) 0;/' "reject: do not count" && \
+    run_pe "a refused field is not reported" kill
+# The count the caller logs must be the count that happened.
+pe_mutate 's/    return \(rep != NULL\) \? rep->applied : 0;/    return 0;/' "from_env: report nothing applied" && \
+    run_pe "portAudioPaceCfgFromEnv reports 0 with two set" kill
+# An empty value is a mistake in a script, not an absent variable.
+pe_mutate 's/        if \(text != NULL && text\[0\] == .\\0.\) \{\n            reject\(rep, name, text, "empty value"\);\n        \}\n//' "empty: treat as unset" && \
+    run_pe "GE_AUDIO_RATE= is not reported" kill
+# Zero step means the ratchet can never move; zero ease means it never comes
+# down. Both are degenerate, and both are one character away from valid.
+pe_mutate 's/    field\(kNames\[2\], in->target_step, 1u, out->target_max,/    field(kNames[2], in->target_step, 0u, out->target_max,/' "step: allow zero" && \
+    run_pe "a zero step is accepted" kill
+pe_mutate 's/    field\(kNames\[3\], in->target_ease, 1u, out->target_max,/    field(kNames[3], in->target_ease, 0u, out->target_max,/' "ease: allow zero" && \
+    run_pe "a zero ease is accepted" kill
+cp "$PE" "$W/mut.c"
+run_pe "audio_pace_env" survive
+
+echo
 echo "baseline"
 MUT_SRC="$CM"
 if cmp -s "$CM" "$CM"; then
@@ -316,6 +401,9 @@ cc $CC_BASE "$TCS" "$CS" -o "$W/b3" 2>/dev/null && "$W/b3" >/dev/null 2>&1 && \
 cc $CC_BASE "$TBF" "$BF" -o "$W/b4" 2>/dev/null && "$W/b4" >/dev/null 2>&1 && \
     printf '  ok       %-50s passes unmutated\n' "boot_flags" || {
     printf '  BROKEN   the unmutated boot flag test fails\n'; status=1; }
+cc $CC_BASE "$TPE" "$PE" "$APE" -o "$W/b5" 2>/dev/null && "$W/b5" >/dev/null 2>&1 && \
+    printf '  ok       %-50s passes unmutated\n' "audio_pace_env" || {
+    printf '  BROKEN   the unmutated pace env test fails\n'; status=1; }
 
 echo
 if [ "$status" -eq 0 ]; then
