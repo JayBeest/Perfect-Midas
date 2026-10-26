@@ -126,9 +126,15 @@ This project stands on the shoulders of giants.
 
 - **Murkantor and the Project Midas team** for the phenomenal base C port.
 - **The Perfect Dark decomp team** for the architectural inspiration.
-- **Dab, Catherine, Wren and the broader community** for pushing the boundaries of what the engine
-  can do.
+- **Dab, Catherine, Wren (Wreck?) and the broader community** for pushing the boundaries of what the
+  engine can do.
+- **ShipofLove, Torn, JillyJane, alkamaas, savantique and Odeyseis** for the work they do for the
+  scene this project exists to serve.
 - **The OmniDyne architects** for the shared format mapping.
+
+Credit here follows contribution, and the list is not a closed set. If you have worked on
+something this project uses and are not named, say so in an issue or on the Discord — being left
+off is an oversight, not a judgement.
 
 ## Licence and fork status
 
