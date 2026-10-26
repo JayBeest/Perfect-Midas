@@ -140,7 +140,7 @@ This project stands on the shoulders of giants.
   engine can do.
 - **JillyJane, Shipoflove, Odeyseis, alkamaas, savantique and Torn** for the work they do for the
   scene this project exists to serve.
-- **Balthazar Soulstealer (Nitrous Icefangs), Graslu, Wreck, Myles, Jeanaru and RedVox57** for
+- **Balthazar Soulstealer (Nitrous Icefangs), Graslu, Kai, Wreck, Myles, Jeanaru and RedVox57** for
   making the community this fork grew out of, and for keeping the GoldenEye and Perfect Dark scenes
   alive.
 - **The OmniDyne architects** for the shared format mapping.
