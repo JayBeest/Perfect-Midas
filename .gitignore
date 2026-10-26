@@ -5,6 +5,11 @@ __pycache__/*
 .[vV][sS]/
 .DS_Store
 
+# Local tool state, not project files: editor/note-vault config and the agent's
+# own session directory. Neither is documentation and neither is shared.
+.obsidian/
+.codewhale/
+
 *.rz
 *.tmp
 *.o
