@@ -1,6 +1,15 @@
 cmake_minimum_required(VERSION 3.16)
 project(ge007 C)
 
+# The editor lives in its own repository now (OmniEditor). It used to be built
+# from this tree as proto_editor/, added here rather than at the end of the file
+# so it did not inherit the game's toolchain; that concern went with it. Nothing
+# in this file refers to it.
+#
+# OmniEditor still compiles three of this tree's translation units - image.c,
+# zlib.c and decompress.c - through -DOBC_GE_ROOT. So this checkout is still a
+# build input for the editor; it just does not build the editor.
+
 # GoldenEye PC port build. macOS uses native 64-bit pointers; existing
 # Windows and Linux builds retain their 32-bit ABI by default.
 # The N64 ROM build stays on the classic Makefile; this file is PC-only.
