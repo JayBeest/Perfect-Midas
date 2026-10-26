@@ -65,6 +65,16 @@ where we build the rails.
 Nothing else on that list has an implementation yet. It is published so the direction is legible,
 not because it is ready.
 
+### A roof, not a rival
+
+OmniDyne is meant to be somewhere the people already building in this space work *together*
+rather than in parallel — the GoldenEye X team, the Phantom work in the KAI branch, and everyone
+else with a fork, a tool, a map or an opinion about how a GoldenEye port should feel.
+
+None of that is a merger, and nothing here is a claim on anyone's work. It is an invitation, and
+the [credits](#credits-and-origins) are where an invitation has to be made good. If you build for
+GE or PD and want the rails shaped around what you actually need, open an issue.
+
 ## Core tenets of development
 
 ### 1. Clean slices and testability
