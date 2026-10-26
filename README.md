@@ -138,13 +138,17 @@ This project stands on the shoulders of giants.
 - **The Perfect Dark decomp team** for the architectural inspiration.
 - **Dab, Catherine, Wren (Wreck?) and the broader community** for pushing the boundaries of what the
   engine can do.
-- **ShipofLove, Torn, JillyJane, alkamaas, savantique and Odeyseis** for the work they do for the
+- **JillyJane, Shipoflove, Odeyseis, alkamaas, savantique and Torn** for the work they do for the
   scene this project exists to serve.
+- **Balthazar Soulstealer (Nitrous Icefangs), Graslu, Wreck, Myles, Jeanaru and RedVox57** for
+  making the community this fork grew out of, and for keeping the GoldenEye and Perfect Dark scenes
+  alive.
 - **The OmniDyne architects** for the shared format mapping.
 
 Credit here follows contribution, and the list is not a closed set. If you have worked on
 something this project uses and are not named, say so in an issue or on the Discord — being left
-off is an oversight, not a judgement.
+off is an oversight, not a judgement. If you are named here in error, or under a name you no longer
+use, say so and it will be corrected.
 
 ## Licence and fork status
 
