@@ -283,6 +283,19 @@ build_native_tests/
 # Local-only developer back-story notes (debug history moved out of source comments)
 docs/devnotes/
 
+# A clone of someone else's engine fork, sitting inside ours.
+#
+# This directory has its OWN .git. `git add` on it does not add 1439 files, it
+# adds a GITLINK - a pointer to a commit in a repository this one does not own and
+# cannot fetch - which is worse than either committing the tree or ignoring it:
+# a fresh clone gets an empty directory and a submodule nobody declared.
+#
+# It is not ours to track. 33 MB of a third-party Perfect Dark fork with its own
+# LICENSE and provenance, never tracked in this repository's history, and the
+# working copy here is scratch space. Ignoring it costs nothing and removes the
+# one way `git add -A` can quietly corrupt the index.
+/NitrousAndCodexPerfectDarkKAI/
+
 # The documentation tier: `docs/` is public, `docs/private/` is not.
 #
 # Public is what a contributor needs to build, run, or report a bug, and it is
