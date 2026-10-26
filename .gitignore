@@ -292,5 +292,12 @@ docs/devnotes/
 # disagreed. A rule that needs -f to obey is not a rule.
 /docs/private/
 
+# Screenshots and other loose images at the repository root are working files,
+# not documentation: the Discord captures and window shots that get dropped here
+# while investigating something. Ignoring the pattern rather than the names means
+# the next one is covered too. Root only - port/include/presskit and
+# port/include/icon.png are tracked and must stay tracked.
+/*.png
+
 # boot_flag_test.sh capture folders (dated; they hold 2 MB BMPs per shot)
 /captures/
